@@ -170,6 +170,16 @@ class PlaywrightInvestigationEngine:
                     page_title = await self.page.title() or page_url
                     page_html = await self.page.content()
 
+                    # Step 4 & 5: Dynamic Queue Expansion (Extract new links on this page FIRST)
+                    new_discovered = nav_engine.extract_and_prioritize_links(page_html, page_url)
+                    for link in new_discovered:
+                        if link["url"] not in visited_urls and link["url"] not in [q["url"] for q in queue]:
+                            queue.append(link)
+
+                    # Re-sort queue by priority: High -> Medium -> Low
+                    priority_rank = {"High": 1, "Medium": 2, "Low": 3}
+                    queue.sort(key=lambda x: priority_rank.get(x["priority"], 2))
+
                     # Step 6: Per-Page Auth / Login Modal Detection & Manual Auth Pause
                     if await self.check_login_required(self.page, page_html, page_url):
                         login_encountered = True
@@ -208,10 +218,17 @@ class PlaywrightInvestigationEngine:
                             self._log(log_callback, investigation_id, "Investigation stopped during authentication pause.", "WARNING")
                             break
 
-                        # Refresh page details after manual login
+                        # Refresh page details & extract new links after manual login
                         page_url = self.page.url
                         page_html = await self.page.content()
                         page_title = await self.page.title() or page_url
+                        
+                        auth_discovered = nav_engine.extract_and_prioritize_links(page_html, page_url)
+                        for link in auth_discovered:
+                            if link["url"] not in visited_urls and link["url"] not in [q["url"] for q in queue]:
+                                queue.append(link)
+                        queue.sort(key=lambda x: priority_rank.get(x["priority"], 2))
+
                         self._log(log_callback, investigation_id, f"Resumed investigation after manual authentication.", "INFO")
 
                     # Deep Deposit & Payment QR Code Inspection Flow (Runs ONCE after login)
@@ -268,16 +285,6 @@ class PlaywrightInvestigationEngine:
                                 page_title = await self.page.title() or "Deposit Payment Page"
                         except Exception as dep_err:
                             logger.debug(f"Deposit flow error: {dep_err}")
-
-                    # Step 4 & 5: Dynamic Queue Expansion (Extract new links on this page)
-                    new_discovered = nav_engine.extract_and_prioritize_links(page_html, page_url)
-                    for link in new_discovered:
-                        if link["url"] not in visited_urls and link["url"] not in [q["url"] for q in queue]:
-                            queue.append(link)
-
-                    # Re-sort queue by priority: High -> Medium -> Low
-                    priority_rank = {"High": 1, "Medium": 2, "Low": 3}
-                    queue.sort(key=lambda x: priority_rank.get(x["priority"], 2))
 
                     # Save Page Record
                     page_id = self.db.add_page(investigation_id, page_url, page_title, priority)
