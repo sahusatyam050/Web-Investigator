@@ -101,7 +101,10 @@ class PlaywrightInvestigationEngine:
         target_url: str, 
         investigation_id: str,
         log_callback: Optional[Callable[[str, str], None]] = None,
-        auth_callback: Optional[Callable[[], None]] = None
+        auth_callback: Optional[Callable[[], None]] = None,
+        auth_user: str = "",
+        auth_pass: str = "",
+        auth_mode: str = "Auto-Detect"
     ) -> Dict[str, Any]:
         """
         Executes the full automated evidence collection workflow (Steps 3-11).
@@ -187,37 +190,88 @@ class PlaywrightInvestigationEngine:
                     priority_rank = {"High": 1, "Medium": 2, "Low": 3}
                     queue.sort(key=lambda x: priority_rank.get(x["priority"], 2))
 
-                    # Step 6: Per-Page Auth / Login Modal Detection & Manual Auth Pause
+                    # Step 6: Per-Page Auth / Login Modal Detection & Automated/Manual Auth
                     if await self.check_login_required(self.page, page_html, page_url):
                         login_encountered = True
-                        self._log(log_callback, investigation_id, f"🔑 Login Required / Auth Form detected on {page_url}! Please log in in the browser window on screen...", "WARNING")
                         
-                        try:
-                            await self.page.bring_to_front()
-                        except Exception:
-                            pass
-
-                        self.pause_for_auth = True
-                        if auth_callback:
-                            auth_callback()
-                        
-                        self.auth_resumed.clear()
-
-                        # Smart Auto-Resume Polling Loop
-                        while self.pause_for_auth and not self.stop_requested:
-                            if self.auth_resumed.is_set():
-                                self.pause_for_auth = False
-                                break
-                            
-                            await asyncio.sleep(1)
-                            
+                        # 1. Attempt Automated Credential Filling if user provided username & password
+                        auto_login_success = False
+                        if auth_user and auth_pass:
+                            self._log(log_callback, investigation_id, f"🔑 Credentials provided for '{auth_user}'! Executing automated login...", "INFO")
                             try:
+                                # A. Sub-Tab Switcher (Phone / User ID / Email)
+                                if auth_mode == "Phone / Mobile Number" or (auth_user.replace("+", "").isdigit() and len(auth_user) >= 10):
+                                    tab = self.page.locator("text=/Phone number|Mobile No|Mobile/i").first
+                                    if await tab.is_visible():
+                                        await tab.click()
+                                        await asyncio.sleep(0.5)
+                                elif auth_mode == "User ID / Username" or ("@" not in auth_user and not auth_user.isdigit()):
+                                    tab = self.page.locator("text=/User ID|Account number|Username/i").first
+                                    if await tab.is_visible():
+                                        await tab.click()
+                                        await asyncio.sleep(0.5)
+                                elif auth_mode == "Email" or "@" in auth_user:
+                                    tab = self.page.locator("text=/E-mail|Email/i").first
+                                    if await tab.is_visible():
+                                        await tab.click()
+                                        await asyncio.sleep(0.5)
+
+                                # B. Fill Username / Mobile / Email input field
+                                user_input = self.page.locator("input[type='tel'], input[type='email'], input[placeholder*='number' i], input[placeholder*='User' i], input[placeholder*='Phone' i], input[name*='user' i], input[name*='phone' i], input[type='text']").first
+                                if await user_input.is_visible():
+                                    await user_input.fill(auth_user)
+                                    await asyncio.sleep(0.5)
+
+                                # C. Fill Password input field
+                                pass_input = self.page.locator("input[type='password']").first
+                                if await pass_input.is_visible():
+                                    await pass_input.fill(auth_pass)
+                                    await asyncio.sleep(0.5)
+
+                                # D. Click Submit / Log in button
+                                submit_btn = self.page.locator("button:has-text('Log in'), button:has-text('LOGIN'), button:has-text('Sign in'), button[type='submit'], input[type='submit']").first
+                                if await submit_btn.is_visible():
+                                    await submit_btn.click()
+                                    await asyncio.sleep(3.0)
+
+                                # E. Check if login succeeded
                                 current_url = self.page.url
                                 current_html = await self.page.content()
                                 if not await self.check_login_required(self.page, current_html, current_url):
-                                    self._log(log_callback, investigation_id, f"✅ Manual login detected in browser ({current_url})! Auto-resuming crawl...", "INFO")
+                                    self._log(log_callback, investigation_id, f"✅ Automated login successful for '{auth_user}'!", "INFO")
+                                    auto_login_success = True
+                            except Exception as auto_err:
+                                self._log(log_callback, investigation_id, f"Auto-login attempt failed ({auto_err}). Falling back to manual auth pause...", "WARNING")
+
+                        # 2. Fallback to Manual Auth Pause if automated login was skipped or failed
+                        if not auto_login_success:
+                            self._log(log_callback, investigation_id, f"🔑 Manual Login Required! Please log in in the browser window on screen...", "WARNING")
+                            try:
+                                await self.page.bring_to_front()
+                            except Exception:
+                                pass
+
+                            self.pause_for_auth = True
+                            if auth_callback:
+                                auth_callback()
+                            
+                            self.auth_resumed.clear()
+
+                            # Smart Auto-Resume Polling Loop
+                            while self.pause_for_auth and not self.stop_requested:
+                                if self.auth_resumed.is_set():
                                     self.pause_for_auth = False
                                     break
+                                
+                                await asyncio.sleep(1)
+                                
+                                try:
+                                    current_url = self.page.url
+                                    current_html = await self.page.content()
+                                    if not await self.check_login_required(self.page, current_html, current_url):
+                                        self._log(log_callback, investigation_id, f"✅ Manual login detected in browser ({current_url})! Auto-resuming crawl...", "INFO")
+                                        self.pause_for_auth = False
+                                        break
                             except Exception:
                                 pass
 

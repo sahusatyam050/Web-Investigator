@@ -59,6 +59,16 @@ with st.sidebar:
 st.markdown("### 🎯 Investigation Controls")
 url_input = st.text_input("Website URL", placeholder="https://parimatch.com", key="url_input")
 
+# Optional Auto-Login Credentials Section
+with st.expander("🔑 Auto-Login Credentials (Optional — Automated Authentication)", expanded=False):
+    c_auth_col1, c_auth_col2, c_auth_col3 = st.columns([2, 3, 3])
+    with c_auth_col1:
+        auth_mode = st.selectbox("Login Mode", ["Auto-Detect", "Phone / Mobile Number", "User ID / Username", "Email"], key="auth_mode")
+    with c_auth_col2:
+        auth_user = st.text_input("Username / Mobile / Email", placeholder="e.g. 9876543210 or Shinchan2001", key="auth_user")
+    with c_auth_col3:
+        auth_pass = st.text_input("Password", type="password", placeholder="Enter account password", key="auth_pass")
+
 col_start, col_stop, col_limit = st.columns([2, 2, 3])
 
 with col_limit:
@@ -118,7 +128,10 @@ if start_clicked and url_input.strip():
                 target_url=val_result["final_url"],
                 investigation_id=investigation_id,
                 log_callback=add_log,
-                auth_callback=trigger_auth_pause
+                auth_callback=trigger_auth_pause,
+                auth_user=auth_user.strip() if auth_user else "",
+                auth_pass=auth_pass.strip() if auth_pass else "",
+                auth_mode=auth_mode
             ))
             
         st.session_state.status = "completed"
