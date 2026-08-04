@@ -216,6 +216,31 @@ class PlaywrightInvestigationEngine:
                         page_title = await self.page.title() or page_url
                         self._log(log_callback, investigation_id, f"Resumed investigation after manual authentication.", "INFO")
 
+                    # Deep Deposit & Payment QR Code Inspection Flow
+                    try:
+                        deposit_selector = "button:has-text('Deposit'), a:has-text('Deposit'), button:has-text('Recharge'), a:has-text('Recharge'), button:has-text('Cashier'), a:has-text('Cashier'), button:has-text('Add Money')"
+                        deposit_btn = self.page.locator(deposit_selector).first
+                        if await deposit_btn.is_visible():
+                            self._log(log_callback, investigation_id, f"Found 'Deposit' button on {page_url}. Navigating to inspect payment options & QR codes...", "INFO")
+                            await deposit_btn.click()
+                            await asyncio.sleep(2.5) # Wait for payment options or modal to load
+
+                            page_url = self.page.url
+                            page_html = await self.page.content()
+                            page_title = await self.page.title() or "Deposit Page"
+
+                            # Click UPI / QR Code sub-tab if present
+                            try:
+                                upi_qr_opt = self.page.locator("text=/UPI|QR Code|Scan & Pay|Paytm|PhonePe|Razorpay/i").first
+                                if await upi_qr_opt.is_visible():
+                                    await upi_qr_opt.click()
+                                    await asyncio.sleep(2.0)
+                                    page_html = await self.page.content()
+                            except Exception:
+                                pass
+                    except Exception as dep_err:
+                        logger.debug(f"Deposit flow error: {dep_err}")
+
                     # Step 4 & 5: Dynamic Queue Expansion (Extract new links on this page)
                     new_discovered = nav_engine.extract_and_prioritize_links(page_html, page_url)
                     for link in new_discovered:

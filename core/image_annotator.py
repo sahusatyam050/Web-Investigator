@@ -60,20 +60,8 @@ class ImageAnnotator:
             cat = item.get("category", "Financial")
             color = CATEGORY_COLORS_BGR.get(cat, (0, 255, 0)) # Default green
 
-            # Draw rectangle (Thickness 3)
-            cv2.rectangle(img, (x1, y1), (x2, y2), color, 3)
-
-            # Label text
-            label = f"[{cat}] {item.get('keyword', '')}"
-            
-            # Label background filled rectangle for text legibility
-            font_scale = 0.5
-            font_thickness = 1
-            (text_w, text_h), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness)
-            
-            label_y1 = max(text_h + 4, y1 - 4)
-            cv2.rectangle(img, (x1, label_y1 - text_h - 4), (x1 + text_w + 6, label_y1 + 4), color, -1)
-            cv2.putText(img, label, (x1 + 3, label_y1), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), font_thickness, cv2.LINE_AA)
+            # Draw clean rectangle outline (Thickness 2)
+            cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
 
         # 2. Draw Bounding Boxes for Payment Findings (QR Codes, Gateway Elements)
         for item in payment_findings:
@@ -95,14 +83,8 @@ class ImageAnnotator:
             y2 = max(0, min(y + h, img_h - 1))
 
             color = CATEGORY_COLORS_BGR.get("Payment_Indicator", (0, 0, 255)) # Bright Red
-            cv2.rectangle(img, (x1, y1), (x2, y2), color, 4)
-
-            label = f"[PAYMENT] {item.get('finding_value', 'Indicator')}"
-            (text_w, text_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-            
-            label_y1 = max(text_h + 4, y1 - 4)
-            cv2.rectangle(img, (x1, label_y1 - text_h - 4), (x1 + text_w + 6, label_y1 + 4), color, -1)
-            cv2.putText(img, label, (x1 + 3, label_y1), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+            # Draw clean payment rectangle outline (Thickness 3)
+            cv2.rectangle(img, (x1, y1), (x2, y2), color, 3)
 
         # Save highlighted image
         cv2.imwrite(str(output_path), img)
