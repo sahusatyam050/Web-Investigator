@@ -71,15 +71,30 @@ class PlaywrightInvestigationEngine:
         except Exception as e:
             logger.error(f"Error closing browser: {e}")
 
-    def check_login_required(self, html_content: str, url: str) -> bool:
-        """Step 6: Checks if page requires authentication or manual login."""
+    async def check_login_required(self, page: Page, html_content: str, url: str) -> bool:
+        """Step 6: Checks if page or visible DOM overlays contain login forms, password inputs, or auth triggers."""
         url_lower = url.lower()
         if any(term in url_lower for term in ["/login", "/signin", "/auth", "/register"]):
             return True
             
         content_lower = html_content.lower()
-        login_triggers = ["please login", "login required", "sign in to continue", "enter password", "enter otp"]
-        return any(trigger in content_lower for trigger in login_triggers)
+        login_text_triggers = [
+            "please login", "login required", "sign in to continue", 
+            "enter password", "forgot your password", "account number",
+            "continue with google", "log in to your account"
+        ]
+        if any(trigger in content_lower for trigger in login_text_triggers):
+            return True
+
+        # Check for visible password input fields or login forms in DOM
+        try:
+            password_count = await page.locator("input[type='password'], input[name*='pass']").count()
+            if password_count > 0:
+                return True
+        except Exception:
+            pass
+
+        return False
 
     async def run_investigation(
         self, 
@@ -111,41 +126,9 @@ class PlaywrightInvestigationEngine:
 
             homepage_url = self.page.url
             homepage_html = await self.page.content()
-            homepage_title = await self.page.title() or "Homepage"
 
-            # Check Auth requirement on Homepage
-            if self.check_login_required(homepage_html, homepage_url):
-                login_encountered = True
-                self._log(log_callback, investigation_id, "Login Required detected! Pausing for manual login...", "WARNING")
-                self.pause_for_auth = True
-                if auth_callback:
-                    auth_callback()
-                
-                # Wait for user to click Resume or Stop
-                self.auth_resumed.clear()
-                await self.auth_resumed.wait()
-
-                if self.stop_requested:
-                    self._log(log_callback, investigation_id, "Investigation stopped during authentication pause.", "WARNING")
-                    self.db.update_investigation(investigation_id, "STOPPED", time.time() - start_time, 0, login_encountered)
-                    return {"status": "STOPPED", "investigation_id": investigation_id}
-
-                # Re-fetch page state after manual login
-                homepage_url = self.page.url
-                homepage_html = await self.page.content()
-                homepage_title = await self.page.title() or "Authenticated Homepage"
-                self._log(log_callback, investigation_id, "Resumed investigation after manual authentication.", "INFO")
-
-            # Step 4 & 5: Build Navigation Queue
-            discovered_links = nav_engine.extract_and_prioritize_links(homepage_html, homepage_url)
-            
-            # Add homepage itself as first item
+            # Add homepage as initial target
             queue.append({"url": homepage_url, "anchor_text": "Homepage", "priority": "High"})
-            for link in discovered_links:
-                if link["url"] not in [q["url"] for q in queue]:
-                    queue.append(link)
-
-            self._log(log_callback, investigation_id, f"Discovered {len(queue)} internal pages. High Priority first.", "INFO")
 
             # Step 7: Investigate Pages in Priority Queue
             pages_visited_count = 0
@@ -174,6 +157,43 @@ class PlaywrightInvestigationEngine:
 
                     page_title = await self.page.title() or page_url
                     page_html = await self.page.content()
+
+                    # Step 6: Per-Page Auth / Login Modal Detection & Manual Auth Pause
+                    if await self.check_login_required(self.page, page_html, page_url):
+                        login_encountered = True
+                        self._log(log_callback, investigation_id, f"🔑 Login Required / Auth Form detected on {page_url}! Pausing for manual login...", "WARNING")
+                        
+                        try:
+                            await self.page.bring_to_front()
+                        except Exception:
+                            pass
+
+                        self.pause_for_auth = True
+                        if auth_callback:
+                            auth_callback()
+                        
+                        self.auth_resumed.clear()
+                        await self.auth_resumed.wait()
+
+                        if self.stop_requested:
+                            self._log(log_callback, investigation_id, "Investigation stopped during authentication pause.", "WARNING")
+                            break
+
+                        # Refresh page details after manual login
+                        page_url = self.page.url
+                        page_html = await self.page.content()
+                        page_title = await self.page.title() or page_url
+                        self._log(log_callback, investigation_id, f"Resumed investigation after manual authentication.", "INFO")
+
+                    # Step 4 & 5: Dynamic Queue Expansion (Extract new links on this page)
+                    new_discovered = nav_engine.extract_and_prioritize_links(page_html, page_url)
+                    for link in new_discovered:
+                        if link["url"] not in visited_urls and link["url"] not in [q["url"] for q in queue]:
+                            queue.append(link)
+
+                    # Re-sort queue by priority: High -> Medium -> Low
+                    priority_rank = {"High": 1, "Medium": 2, "Low": 3}
+                    queue.sort(key=lambda x: priority_rank.get(x["priority"], 2))
 
                     # Save Page Record
                     page_id = self.db.add_page(investigation_id, page_url, page_title, priority)

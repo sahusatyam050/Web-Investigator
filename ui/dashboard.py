@@ -128,7 +128,7 @@ def render_dashboard(db: DatabaseManager, investigation_id: str):
                     if p.get("highlighted_image_path") and os.path.exists(p["highlighted_image_path"]):
                         st.markdown("**Highlighted Evidence Screenshot:**")
                         img = Image.open(p["highlighted_image_path"])
-                        st.image(img, caption=f"Evidence Screenshot for {p['page_url']}", use_column_width=True)
+                        st.image(img, caption=f"Evidence Screenshot for {p['page_url']}", use_container_width=True)
 
     # TAB 2: PAYMENT INTELLIGENCE
     with tab_payment:
@@ -160,7 +160,7 @@ def render_dashboard(db: DatabaseManager, investigation_id: str):
 
             st.markdown(f"#### Screenshot: `{selected_page['page_url']}`")
             img = Image.open(selected_page["highlighted_image_path"])
-            st.image(img, use_column_width=True)
+            st.image(img, use_container_width=True)
 
             with st.expander("🔍 View Extracted Bounding Box Coordinates for this Screenshot", expanded=True):
                 if selected_page.get("keywords"):
