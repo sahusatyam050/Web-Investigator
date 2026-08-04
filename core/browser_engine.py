@@ -161,7 +161,7 @@ class PlaywrightInvestigationEngine:
                     # Step 6: Per-Page Auth / Login Modal Detection & Manual Auth Pause
                     if await self.check_login_required(self.page, page_html, page_url):
                         login_encountered = True
-                        self._log(log_callback, investigation_id, f"🔑 Login Required / Auth Form detected on {page_url}! Pausing for manual login...", "WARNING")
+                        self._log(log_callback, investigation_id, f"🔑 Login Required / Auth Form detected on {page_url}! Please log in in the browser window on screen...", "WARNING")
                         
                         try:
                             await self.page.bring_to_front()
@@ -173,7 +173,27 @@ class PlaywrightInvestigationEngine:
                             auth_callback()
                         
                         self.auth_resumed.clear()
-                        await self.auth_resumed.wait()
+
+                        # Smart Auto-Resume Polling Loop:
+                        # Waits for EITHER user clicking Resume button OR logging in directly in the Playwright browser!
+                        while self.pause_for_auth and not self.stop_requested:
+                            # Check if auth_resumed event was set by Streamlit button
+                            if self.auth_resumed.is_set():
+                                self.pause_for_auth = False
+                                break
+                            
+                            await asyncio.sleep(1)
+                            
+                            # Check if user has logged in directly in the open browser window
+                            try:
+                                current_url = self.page.url
+                                current_html = await self.page.content()
+                                if not await self.check_login_required(self.page, current_html, current_url):
+                                    self._log(log_callback, investigation_id, f"✅ Manual login detected in browser ({current_url})! Auto-resuming crawl...", "INFO")
+                                    self.pause_for_auth = False
+                                    break
+                            except Exception:
+                                pass
 
                         if self.stop_requested:
                             self._log(log_callback, investigation_id, "Investigation stopped during authentication pause.", "WARNING")
