@@ -45,7 +45,8 @@ class PaymentDetector:
             // Search for QR Code images or canvas containers
             const images = document.querySelectorAll('img, canvas, svg, div');
             images.forEach(el => {
-                const alt = (el.alt || el.className || el.id || '').toLowerCase();
+                const classStr = typeof el.className === 'string' ? el.className : (el.getAttribute('class') || '');
+                const alt = String(el.alt || classStr || el.id || '').toLowerCase();
                 if (alt.includes('qr') || alt.includes('upi') || alt.includes('scan')) {
                     const rect = el.getBoundingClientRect();
                     if (rect.width > 50 && rect.height > 50) {
