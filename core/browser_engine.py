@@ -114,6 +114,7 @@ class PlaywrightInvestigationEngine:
         self.db.create_investigation(investigation_id, target_url)
         self._log(log_callback, investigation_id, f"Started investigation for {target_url}", "INFO")
 
+        deposit_inspected = False
         login_encountered = False
 
         try:
@@ -155,7 +156,7 @@ class PlaywrightInvestigationEngine:
                         await self.page.goto(page_url, wait_until="domcontentloaded", timeout=DEFAULT_RENDER_TIMEOUT)
                         await asyncio.sleep(1.5)
 
-                    # Auto-trigger Login Modal if a visible 'Log in' button is on screen
+                    # Auto-trigger Login Modal ONCE if login button is visible and auth not done
                     if not login_encountered:
                         try:
                             login_btn = self.page.locator("button:has-text('Log in'), a:has-text('Log in'), button:has-text('Sign in'), a:has-text('Sign in')").first
@@ -185,17 +186,14 @@ class PlaywrightInvestigationEngine:
                         
                         self.auth_resumed.clear()
 
-                        # Smart Auto-Resume Polling Loop:
-                        # Waits for EITHER user clicking Resume button OR logging in directly in the Playwright browser!
+                        # Smart Auto-Resume Polling Loop
                         while self.pause_for_auth and not self.stop_requested:
-                            # Check if auth_resumed event was set by Streamlit button
                             if self.auth_resumed.is_set():
                                 self.pause_for_auth = False
                                 break
                             
                             await asyncio.sleep(1)
                             
-                            # Check if user has logged in directly in the open browser window
                             try:
                                 current_url = self.page.url
                                 current_html = await self.page.content()
@@ -216,30 +214,31 @@ class PlaywrightInvestigationEngine:
                         page_title = await self.page.title() or page_url
                         self._log(log_callback, investigation_id, f"Resumed investigation after manual authentication.", "INFO")
 
-                    # Deep Deposit & Payment QR Code Inspection Flow
-                    try:
-                        deposit_selector = "button:has-text('Deposit'), a:has-text('Deposit'), button:has-text('Recharge'), a:has-text('Recharge'), button:has-text('Cashier'), a:has-text('Cashier'), button:has-text('Add Money')"
-                        deposit_btn = self.page.locator(deposit_selector).first
-                        if await deposit_btn.is_visible():
-                            self._log(log_callback, investigation_id, f"Found 'Deposit' button on {page_url}. Navigating to inspect payment options & QR codes...", "INFO")
-                            await deposit_btn.click()
-                            await asyncio.sleep(2.5) # Wait for payment options or modal to load
+                    # Deep Deposit & Payment QR Code Inspection Flow (Runs ONCE after login)
+                    if login_encountered and not deposit_inspected:
+                        try:
+                            deposit_selector = "button:has-text('Deposit'), a:has-text('Deposit'), button:has-text('Recharge'), a:has-text('Recharge'), button:has-text('Cashier'), a:has-text('Cashier'), button:has-text('Add Money')"
+                            deposit_btn = self.page.locator(deposit_selector).first
+                            if await deposit_btn.is_visible():
+                                deposit_inspected = True
+                                self._log(log_callback, investigation_id, f"Navigating to Deposit section to inspect payment options & QR codes...", "INFO")
+                                await deposit_btn.click()
+                                await asyncio.sleep(2.5)
 
-                            page_url = self.page.url
-                            page_html = await self.page.content()
-                            page_title = await self.page.title() or "Deposit Page"
+                                page_url = self.page.url
+                                page_html = await self.page.content()
+                                page_title = await self.page.title() or "Deposit Page"
 
-                            # Click UPI / QR Code sub-tab if present
-                            try:
-                                upi_qr_opt = self.page.locator("text=/UPI|QR Code|Scan & Pay|Paytm|PhonePe|Razorpay/i").first
-                                if await upi_qr_opt.is_visible():
-                                    await upi_qr_opt.click()
-                                    await asyncio.sleep(2.0)
-                                    page_html = await self.page.content()
-                            except Exception:
-                                pass
-                    except Exception as dep_err:
-                        logger.debug(f"Deposit flow error: {dep_err}")
+                                try:
+                                    upi_qr_opt = self.page.locator("text=/UPI|QR Code|Scan & Pay|Paytm|PhonePe|Razorpay/i").first
+                                    if await upi_qr_opt.is_visible():
+                                        await upi_qr_opt.click()
+                                        await asyncio.sleep(2.0)
+                                        page_html = await self.page.content()
+                                except Exception:
+                                    pass
+                        except Exception as dep_err:
+                            logger.debug(f"Deposit flow error: {dep_err}")
 
                     # Step 4 & 5: Dynamic Queue Expansion (Extract new links on this page)
                     new_discovered = nav_engine.extract_and_prioritize_links(page_html, page_url)
