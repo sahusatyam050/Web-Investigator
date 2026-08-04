@@ -22,7 +22,8 @@ HIGH_PRIORITY_KEYWORDS = [
     "deposit", "withdraw", "withdrawal", "wallet", "cashier", 
     "payment", "pay", "transactions", "transaction", "recharge", 
     "bonus", "referral", "rewards", "reward", "kyc", "profile", 
-    "account", "add money", "cash out"
+    "account", "add money", "cash out", "login", "log in", 
+    "sign in", "signin", "register", "sign up", "signup"
 ]
 
 MEDIUM_PRIORITY_KEYWORDS = [
