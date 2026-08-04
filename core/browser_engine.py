@@ -155,6 +155,17 @@ class PlaywrightInvestigationEngine:
                         await self.page.goto(page_url, wait_until="domcontentloaded", timeout=DEFAULT_RENDER_TIMEOUT)
                         await asyncio.sleep(1.5)
 
+                    # Auto-trigger Login Modal if a visible 'Log in' button is on screen
+                    if not login_encountered:
+                        try:
+                            login_btn = self.page.locator("button:has-text('Log in'), a:has-text('Log in'), button:has-text('Sign in'), a:has-text('Sign in')").first
+                            if await login_btn.is_visible():
+                                self._log(log_callback, investigation_id, "Found visible 'Log in' button. Clicking to open login modal...", "INFO")
+                                await login_btn.click()
+                                await asyncio.sleep(1.5)
+                        except Exception:
+                            pass
+
                     page_title = await self.page.title() or page_url
                     page_html = await self.page.content()
 
