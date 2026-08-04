@@ -225,18 +225,47 @@ class PlaywrightInvestigationEngine:
                                 await deposit_btn.click()
                                 await asyncio.sleep(2.5)
 
+                                # 1. Locate and click UPI / Paytm / PhonePe method card
+                                upi_card_selectors = [
+                                    "div:has-text('UPI'):not(:has(*))",
+                                    "div:has-text('Pay Tm'):not(:has(*))",
+                                    "div:has-text('Paytm'):not(:has(*))",
+                                    "div:has-text('Phone Pe'):not(:has(*))",
+                                    "text=/UPI|Pay Tm|Paytm|Phone Pe/i"
+                                ]
+                                
+                                payment_clicked = False
+                                for sel in upi_card_selectors:
+                                    try:
+                                        card = self.page.locator(sel).first
+                                        if await card.is_visible():
+                                            self._log(log_callback, investigation_id, f"Clicking Payment Method card: '{sel}'...", "INFO")
+                                            await card.click()
+                                            await asyncio.sleep(2.0)
+                                            payment_clicked = True
+                                            break
+                                    except Exception:
+                                        continue
+
+                                # 2. Handle pre-set deposit amount or Continue button if prompted
+                                if payment_clicked:
+                                    try:
+                                        amount_btn = self.page.locator("button:has-text('500'), button:has-text('1000'), div:has-text('500')").first
+                                        if await amount_btn.is_visible():
+                                            await amount_btn.click()
+                                            await asyncio.sleep(1.0)
+
+                                        submit_pay_btn = self.page.locator("button:has-text('Continue'), button:has-text('Deposit'), button:has-text('Pay')").first
+                                        if await submit_pay_btn.is_visible():
+                                            self._log(log_callback, investigation_id, "Clicking 'Continue/Deposit' to generate active QR code & UPI VPA...", "INFO")
+                                            await submit_pay_btn.click()
+                                            await asyncio.sleep(3.0) # Wait for QR code image or payment gateway iframe to render
+                                    except Exception as sub_err:
+                                        logger.debug(f"Amount submit error: {sub_err}")
+
                                 page_url = self.page.url
                                 page_html = await self.page.content()
-                                page_title = await self.page.title() or "Deposit Page"
-
-                                try:
-                                    upi_qr_opt = self.page.locator("text=/UPI|QR Code|Scan & Pay|Paytm|PhonePe|Razorpay/i").first
-                                    if await upi_qr_opt.is_visible():
-                                        await upi_qr_opt.click()
-                                        await asyncio.sleep(2.0)
-                                        page_html = await self.page.content()
-                                except Exception:
-                                    pass
+                                page_title = await self.page.title() or "Deposit Payment Page"
                         except Exception as dep_err:
                             logger.debug(f"Deposit flow error: {dep_err}")
 
