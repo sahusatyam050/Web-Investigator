@@ -272,8 +272,8 @@ class PlaywrightInvestigationEngine:
                                         self._log(log_callback, investigation_id, f"✅ Manual login detected in browser ({current_url})! Auto-resuming crawl...", "INFO")
                                         self.pause_for_auth = False
                                         break
-                            except Exception:
-                                pass
+                                except Exception:
+                                    pass
 
                         if self.stop_requested:
                             self._log(log_callback, investigation_id, "Investigation stopped during authentication pause.", "WARNING")
