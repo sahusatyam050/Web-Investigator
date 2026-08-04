@@ -19,11 +19,37 @@ HEADLESS = False  # Headed mode for visible browser & manual auth
 
 # Priority Navigation Lists
 HIGH_PRIORITY_KEYWORDS = [
+    # Core Actions & Navigation
     "deposit", "withdraw", "withdrawal", "wallet", "cashier", 
     "payment", "pay", "transactions", "transaction", "recharge", 
     "bonus", "referral", "rewards", "reward", "kyc", "profile", 
-    "account", "add money", "cash out", "login", "log in", 
-    "sign in", "signin", "register", "sign up", "signup"
+    "account", "add money", "cash out", "cashout", "login", "log in", 
+    "sign in", "signin", "register", "sign up", "signup",
+    
+    # Financial Balance & Wallet Categories
+    "my wallet", "balance", "available balance", "cash balance", 
+    "bonus balance", "winning balance", "deposit balance",
+    "my transactions", "transaction id", "reference number", "payment reference",
+    
+    # Action Buttons
+    "make payment", "pay now", "checkout",
+    
+    # UPI & Instant Payment Rails
+    "upi", "upi id", "upi address", "collect request", "scan & pay", 
+    "gpay", "google pay", "phonepe", "phone pe", "paytm", "pay tm", 
+    "bhim", "amazon pay", "astropay", "qr", "qr code", "scan qr", "scan code",
+    
+    # Banking Rails
+    "bank", "bank account", "account number", "beneficiary", "beneficiary name",
+    "imps", "neft", "rtgs", "ecs", "ach", "netbanking", "net banking", "bank transfer",
+    
+    # Cards & Gateway Rails
+    "razorpay", "cashfree", "payu", "ccavenue", "billdesk",
+    "debit card", "credit card", "visa", "mastercard", "rupay",
+    
+    # Crypto Rails
+    "crypto", "cryptocurrency", "bitcoin", "btc", "ethereum", "eth", 
+    "usdt", "usdc", "tron", "bnb", "coinbase", "binance pay"
 ]
 
 MEDIUM_PRIORITY_KEYWORDS = [
@@ -37,13 +63,19 @@ LOW_PRIORITY_KEYWORDS = [
     "blog", "news", "responsible gaming", "disclaimer", "license"
 ]
 
-# Categorized Keyword Lists for Detection
+# Categorized Keyword Lists for Detection & Annotation
 CATEGORIZED_KEYWORDS = {
     "Financial": [
         "deposit", "withdraw", "withdrawal", "wallet", "cashier", 
         "balance", "transfer", "payout", "topup", "add money", 
-        "bank", "upi", "gateway", "currency", "inr", "usd", 
-        "crypto", "usdt", "transaction", "recharge"
+        "bank", "upi", "upi id", "gateway", "currency", "inr", "usd", 
+        "crypto", "usdt", "usdc", "bitcoin", "btc", "ethereum", "eth", "tron", "bnb",
+        "transaction", "my transactions", "recharge", "imps", "neft", "rtgs", "ecs", "ach",
+        "gpay", "google pay", "phonepe", "phone pe", "paytm", "pay tm", "amazon pay", "bhim",
+        "razorpay", "cashfree", "payu", "ccavenue", "billdesk", "rupay", "visa", "mastercard",
+        "available balance", "winning balance", "deposit balance", "bonus balance",
+        "beneficiary", "account number", "reference number", "transaction id",
+        "qr", "qr code", "scan & pay", "scan qr"
     ],
     "Gaming": [
         "casino", "slot", "slots", "roulette", "blackjack", "poker", 
@@ -97,8 +129,8 @@ CATEGORY_COLORS_HEX = {
 # Payment Indicator Patterns & Signatures
 PAYMENT_INDICATOR_PATTERNS = {
     "UPI_ID": r"[a-zA-Z0-9.\-_]+@(upi|okicici|ybl|paytm|ibl|axl|sbi|kotak|barodampay|icici|hdfcbank|okaxis|oksbi|okhdfcbank)",
-    "PAYMENT_GATEWAY": r"(razorpay|cashfree|stripe|paytm|phonepe|google pay|gpay|payu|instamojo|paypal|ccavenue)",
-    "QR_CODE": r"(qr code|scan and pay|upi qr|scan to pay|scan qr)",
-    "BANK_TRANSFER": r"(bank transfer|imps|neft|rtgs|account number|ifsc|account name)",
-    "WALLET": r"(paytm wallet|phonepe wallet|mobikwik|freecharge|crypto wallet|usdt trc20|bep20)"
+    "PAYMENT_GATEWAY": r"(razorpay|cashfree|stripe|paytm|phonepe|google pay|gpay|payu|instamojo|paypal|ccavenue|billdesk)",
+    "QR_CODE": r"(qr code|scan and pay|scan & pay|upi qr|scan to pay|scan qr|scan code)",
+    "BANK_TRANSFER": r"(bank transfer|imps|neft|rtgs|ecs|ach|account number|ifsc|account name|beneficiary)",
+    "WALLET": r"(paytm wallet|phonepe wallet|mobikwik|freecharge|crypto wallet|usdt trc20|bep20|binance pay|coinbase)"
 }
