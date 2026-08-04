@@ -279,7 +279,11 @@ class PlaywrightInvestigationEngine:
                             self._log(log_callback, investigation_id, "Investigation stopped during authentication pause.", "WARNING")
                             break
 
-                        # Refresh page details & extract new links after manual login
+                        # Wait for SPA Dashboard to fully render after login
+                        self._log(log_callback, investigation_id, "Waiting for authenticated dashboard to render...", "INFO")
+                        await asyncio.sleep(4.0)
+
+                        # Refresh page details & extract new links after login
                         page_url = self.page.url
                         page_html = await self.page.content()
                         page_title = await self.page.title() or page_url
@@ -288,9 +292,22 @@ class PlaywrightInvestigationEngine:
                         for link in auth_discovered:
                             if link["url"] not in visited_urls and link["url"] not in [q["url"] for q in queue]:
                                 queue.append(link)
+                                
+                        # Fallback: forcefully extract hrefs via JS if BeautifulSoup missed them
+                        try:
+                            js_hrefs = await self.page.evaluate("Array.from(document.querySelectorAll('a[href], [data-href]')).map(a => a.href || a.getAttribute('data-href'))")
+                            for href in js_hrefs:
+                                if href and not href.startswith(('javascript:', '#')):
+                                    norm = nav_engine.normalize_url(href, page_url)
+                                    if nav_engine.is_internal_link(norm):
+                                        if norm not in visited_urls and norm not in [q["url"] for q in queue]:
+                                            queue.append({"url": norm, "anchor_text": "JS Extracted Link", "priority": "Medium"})
+                        except Exception as e:
+                            pass
+
                         queue.sort(key=lambda x: priority_rank.get(x["priority"], 2))
 
-                        self._log(log_callback, investigation_id, f"Resumed investigation after manual authentication.", "INFO")
+                        self._log(log_callback, investigation_id, f"Resumed investigation after authentication. {len(queue)} pages queued.", "INFO")
 
                     # Deep Deposit & Payment QR Code Inspection Flow (Runs ONCE after login)
                     if login_encountered and not deposit_inspected:
