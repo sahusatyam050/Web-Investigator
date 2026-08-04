@@ -122,7 +122,11 @@ class PlaywrightInvestigationEngine:
             
             # Step 3: Launch Playwright & Open Homepage
             self._log(log_callback, investigation_id, "Opening Homepage...", "INFO")
-            await self.page.goto(target_url, wait_until="domcontentloaded", timeout=DEFAULT_RENDER_TIMEOUT)
+            try:
+                await self.page.goto(target_url, wait_until="domcontentloaded", timeout=DEFAULT_RENDER_TIMEOUT)
+            except Exception as goto_err:
+                self._log(log_callback, investigation_id, f"Initial page load warning ({goto_err}). Proceeding with current page content...", "WARNING")
+            
             await asyncio.sleep(2) # Wait for dynamic rendering
 
             homepage_url = self.page.url
@@ -153,7 +157,10 @@ class PlaywrightInvestigationEngine:
 
                 try:
                     if page_url != self.page.url:
-                        await self.page.goto(page_url, wait_until="domcontentloaded", timeout=DEFAULT_RENDER_TIMEOUT)
+                        try:
+                            await self.page.goto(page_url, wait_until="domcontentloaded", timeout=DEFAULT_RENDER_TIMEOUT)
+                        except Exception as p_err:
+                            self._log(log_callback, investigation_id, f"Navigation timeout on {page_url}, proceeding with available DOM...", "WARNING")
                         await asyncio.sleep(1.5)
 
                     # Auto-trigger Login Modal ONCE if login button is visible and auth not done

@@ -14,7 +14,7 @@ DB_PATH = DATA_DIR / "evidence.db"
 
 # Crawler Parameters
 DEFAULT_MAX_PAGES = 15
-DEFAULT_RENDER_TIMEOUT = 15000  # ms for Playwright (15 seconds)
+DEFAULT_RENDER_TIMEOUT = 30000  # ms for Playwright (30 seconds for heavy gaming portals)
 HEADLESS = False  # Headed mode for visible browser & manual auth
 
 # Priority Navigation Lists
