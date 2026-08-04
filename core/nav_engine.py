@@ -46,16 +46,25 @@ class NavigationEngine:
             return False
 
     def normalize_url(self, href: str, current_url: str) -> str:
-        """Resolves relative links and strips hash fragments."""
+        """Resolves relative links, strips hash fragments, and removes tracking query parameters."""
         full_url = urllib.parse.urljoin(current_url, href)
         parsed = urllib.parse.urlparse(full_url)
+        
+        # Filter out tracking and redundant query parameters (e.g. source_type, ref, utm_*, lang)
+        query_params = urllib.parse.parse_qs(parsed.query, keep_blank_values=False)
+        filtered_params = {
+            k: v for k, v in query_params.items() 
+            if k.lower() not in ["source_type", "ref", "utm_source", "utm_medium", "utm_campaign", "lang", "language", "session", "click_id"]
+        }
+        clean_query = urllib.parse.urlencode(filtered_params, doseq=True)
+
         # Rebuild without fragment (#) or trailing duplicate slashes
         clean_url = urllib.parse.urlunparse((
             parsed.scheme,
             parsed.netloc.lower(),
             parsed.path.rstrip('/') if parsed.path != '/' else '/',
             parsed.params,
-            parsed.query,
+            clean_query,
             '' # drop fragment
         ))
         return clean_url

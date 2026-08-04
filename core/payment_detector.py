@@ -64,6 +64,32 @@ class PaymentDetector:
                 }
             });
 
+            // Deep DOM scanning for active UPI VPAs (e.g. 9464604336@ptaxis)
+            const upiRegex = /[a-zA-Z0-9.\\-_]+@(upi|okicici|ybl|paytm|ibl|axl|sbi|kotak|barodampay|icici|hdfcbank|okaxis|oksbi|okhdfcbank|ptaxis)/gi;
+            const elements = document.querySelectorAll('div, span, p, label, code, b, strong');
+            elements.forEach(el => {
+                const text = el.innerText || el.textContent || '';
+                if (text && text.length < 300) {
+                    const matches = text.match(upiRegex);
+                    if (matches) {
+                        matches.forEach(vpa => {
+                            const rect = el.getBoundingClientRect();
+                            results.push({
+                                type: 'UPI_ID',
+                                val: vpa.trim(),
+                                confidence: 'High (DOM Inspected)',
+                                bounding_box: (rect.width > 0 && rect.height > 0) ? {
+                                    x: Math.round(rect.left + window.scrollX),
+                                    y: Math.round(rect.top + window.scrollY),
+                                    width: Math.round(rect.width),
+                                    height: Math.round(rect.height)
+                                } : null
+                            });
+                        });
+                    }
+                }
+            });
+
             return results;
         }
         """
