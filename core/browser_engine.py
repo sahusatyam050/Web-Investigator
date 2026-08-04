@@ -242,13 +242,13 @@ class PlaywrightInvestigationEngine:
                                 await deposit_btn.click()
                                 await asyncio.sleep(2.5)
 
-                                # 1. Locate and click UPI / Paytm / PhonePe method card
+                                # 1. Locate and click UPI / PhonePe / Paytm / Other UPI method card
                                 upi_card_selectors = [
-                                    "div:has-text('UPI'):not(:has(*))",
-                                    "div:has-text('Pay Tm'):not(:has(*))",
+                                    "text=/Other UPI|PhonePe|Paytm|UPI|Pay Tm|Phone Pe/i",
+                                    "div:has-text('Other UPI'):not(:has(*))",
+                                    "div:has-text('PhonePe'):not(:has(*))",
                                     "div:has-text('Paytm'):not(:has(*))",
-                                    "div:has-text('Phone Pe'):not(:has(*))",
-                                    "text=/UPI|Pay Tm|Paytm|Phone Pe/i"
+                                    "div:has-text('UPI'):not(:has(*))"
                                 ]
                                 
                                 payment_clicked = False
@@ -267,7 +267,7 @@ class PlaywrightInvestigationEngine:
                                 # 2. Handle pre-set deposit amount or Continue button if prompted
                                 if payment_clicked:
                                     try:
-                                        amount_btn = self.page.locator("button:has-text('500'), button:has-text('1000'), div:has-text('500')").first
+                                        amount_btn = self.page.locator("button:has-text('1000'), button:has-text('500'), div:has-text('1000')").first
                                         if await amount_btn.is_visible():
                                             await amount_btn.click()
                                             await asyncio.sleep(1.0)
@@ -276,9 +276,15 @@ class PlaywrightInvestigationEngine:
                                         if await submit_pay_btn.is_visible():
                                             self._log(log_callback, investigation_id, "Clicking 'Continue/Deposit' to generate active QR code & UPI VPA...", "INFO")
                                             await submit_pay_btn.click()
-                                            await asyncio.sleep(3.0) # Wait for QR code image or payment gateway iframe to render
+                                            await asyncio.sleep(3.0)
                                     except Exception as sub_err:
                                         logger.debug(f"Amount submit error: {sub_err}")
+
+                                # 3. Wait for generated QR Code and UPI VPA handle (e.g. @ptaxis / @upi) to render
+                                try:
+                                    await self.page.wait_for_selector("text=/@|UPI ID|Scan QR/i", timeout=4000)
+                                except Exception:
+                                    pass
 
                                 page_url = self.page.url
                                 page_html = await self.page.content()
@@ -311,6 +317,18 @@ class PlaywrightInvestigationEngine:
                     )
 
                     self.db.add_screenshot(page_id, highlighted_path)
+
+                    # Clean up any modal overlay (e.g. Deposit overlay) so Playwright can smoothly navigate to subsequent pages
+                    try:
+                        cancel_btn = self.page.locator("button:has-text('Cancel'), [aria-label='Close'], button:has-text('✕')").first
+                        if await cancel_btn.is_visible():
+                            await cancel_btn.click()
+                            await asyncio.sleep(1.0)
+                        else:
+                            await self.page.keyboard.press("Escape")
+                            await asyncio.sleep(0.5)
+                    except Exception:
+                        pass
 
                 except Exception as page_err:
                     self._log(log_callback, investigation_id, f"Error investigating {page_url}: {page_err}", "ERROR")
