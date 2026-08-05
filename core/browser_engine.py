@@ -103,6 +103,7 @@ class PlaywrightInvestigationEngine:
         investigation_id: str,
         log_callback: Optional[Callable[[str, str], None]] = None,
         auth_callback: Optional[Callable[[], None]] = None,
+        progress_callback: Optional[Callable[[str], None]] = None,
         auth_user: str = "",
         auth_pass: str = "",
         auth_mode: str = "Auto-Detect"
@@ -156,6 +157,9 @@ class PlaywrightInvestigationEngine:
 
                 visited_urls.add(page_url)
                 pages_visited_count += 1
+                
+                if progress_callback:
+                    progress_callback(f"Crawling [{pages_visited_count}/{self.max_pages}]: {page_url}")
 
                 self._log(log_callback, investigation_id, f"[{pages_visited_count}/{self.max_pages}] Investigating ({priority}): {page_url}", "INFO")
 
@@ -312,6 +316,8 @@ class PlaywrightInvestigationEngine:
 
                     # Deep Deposit & Payment QR Code Inspection Flow (Runs ONCE after login)
                     if login_encountered and not deposit_inspected:
+                        if progress_callback:
+                            progress_callback("Inspecting Payment Methods & QR Codes...")
                         try:
                             deposit_selector = "button:has-text('Deposit'), a:has-text('Deposit'), button:has-text('Recharge'), a:has-text('Recharge'), button:has-text('Cashier'), a:has-text('Cashier'), button:has-text('Add Money')"
                             deposit_btn = self.page.locator(deposit_selector).first
@@ -387,6 +393,9 @@ class PlaywrightInvestigationEngine:
                     if payment_findings:
                         self.db.add_payment_findings(page_id, payment_findings)
 
+                    if progress_callback:
+                        progress_callback(f"Capturing Evidence Screenshot...")
+                    
                     # Step 9: Screenshot Capture & OpenCV Annotation
                     raw_screenshot = await self.page.screenshot(full_page=False)
                     screenshot_filename = f"inv_{investigation_id}_page_{page_id}.png"
