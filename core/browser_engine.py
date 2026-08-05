@@ -185,9 +185,16 @@ class PlaywrightInvestigationEngine:
                             if await tab.is_visible(): await tab.click(); await asyncio.sleep(0.5)
 
                         user_input = self.page.locator("input[type='tel'], input[type='email'], input[placeholder*='number' i], input[placeholder*='User' i], input[placeholder*='Phone' i], input[name*='user' i], input[name*='phone' i], input[type='text']").first
-                        if await user_input.is_visible(): await user_input.fill(auth_user); await asyncio.sleep(0.5)
-                        pass_input = self.page.locator("input[type='password']").first
-                        if await pass_input.is_visible(): await pass_input.fill(auth_pass); await asyncio.sleep(0.5)
+                        if await user_input.is_visible():
+                            await user_input.click()
+                            await user_input.press_sequentially(auth_user, delay=50)
+                            await asyncio.sleep(0.5)
+                        
+                        pass_input = self.page.locator("input[type='password'], input[name='password'], input[placeholder*='Password' i]").first
+                        if await pass_input.is_visible():
+                            await pass_input.click()
+                            await pass_input.press_sequentially(auth_pass, delay=50)
+                            await asyncio.sleep(0.5)
                         submit_btn = self.page.locator("button:has-text('Log in'), button:has-text('LOGIN'), button:has-text('Sign in'), button[type='submit'], input[type='submit']").first
                         if await submit_btn.is_visible(): await submit_btn.click(); await asyncio.sleep(3.0)
 
