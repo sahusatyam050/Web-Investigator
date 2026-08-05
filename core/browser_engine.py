@@ -207,7 +207,16 @@ class PlaywrightInvestigationEngine:
                         is_email = "@" in auth_user or auth_mode == "Email"
                         is_phone = (auth_mode == "Phone / Mobile Number") or (len(clean_digits) >= 10 and not is_email)
                         
-                        fill_val = clean_digits[-10:] if (is_phone and len(clean_digits) >= 10) else auth_user.strip()
+                        # Format fill_val with country code '91' for Indian mobile numbers
+                        if is_phone:
+                            if len(clean_digits) == 10:
+                                fill_val = "91" + clean_digits
+                            elif len(clean_digits) == 12 and clean_digits.startswith("91"):
+                                fill_val = clean_digits
+                            else:
+                                fill_val = clean_digits
+                        else:
+                            fill_val = auth_user.strip()
 
                         # Attempt to fill user/phone input with retries
                         user_filled = False
