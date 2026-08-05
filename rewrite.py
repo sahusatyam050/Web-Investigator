@@ -1,102 +1,13 @@
-import asyncio
-import time
-import uuid
-import logging
-from typing import Dict, List, Any, Optional, Callable
-from playwright.async_api import async_playwright, Browser, BrowserContext, Page
+import re
 
-from config import DEFAULT_MAX_PAGES, DEFAULT_RENDER_TIMEOUT, HEADLESS
-from database.db_manager import DatabaseManager
-from core.keyword_detector import KeywordDetector
-from core.payment_detector import PaymentDetector
-from core.image_annotator import ImageAnnotator
+with open("core/browser_engine.py", "r") as f:
+    content = f.read()
 
-logger = logging.getLogger(__name__)
+# Remove NavigationEngine import
+content = re.sub(r'from core\.nav_engine import NavigationEngine\n', '', content)
 
-class PlaywrightInvestigationEngine:
-    """
-    Core Evidence Collection Engine:
-    Manages Playwright headed browser session, Priority Navigation, Auth Pause/Resume,
-    Keyword & Payment detection, Bounding box extraction, and Evidence Persistence.
-    """
-
-    def __init__(self, db_manager: DatabaseManager, max_pages: int = DEFAULT_MAX_PAGES):
-        self.db = db_manager
-        self.max_pages = max_pages
-        self.stop_requested = False
-        self.pause_for_auth = False
-        self.auth_resumed = asyncio.Event()
-
-        self.playwright = None
-        self.browser: Optional[Browser] = None
-        self.context: Optional[BrowserContext] = None
-        self.page: Optional[Page] = None
-
-        self.keyword_detector = KeywordDetector()
-        self.payment_detector = PaymentDetector()
-
-    def request_stop(self):
-        """Called when user clicks Stop Investigation button."""
-        self.stop_requested = True
-        self.auth_resumed.set() # Unblock pause if waiting
-
-    def resume_investigation(self):
-        """Called when user completes manual login and clicks Resume Investigation."""
-        self.pause_for_auth = False
-        self.auth_resumed.set()
-
-    async def init_browser(self):
-        """Launches Playwright Chromium browser in Headed mode."""
-        self.playwright = await async_playwright().start()
-        self.browser = await self.playwright.chromium.launch(
-            headless=HEADLESS,
-            args=["--start-maximized", "--disable-blink-features=AutomationControlled"]
-        )
-        self.context = await self.browser.new_context(
-            viewport={"width": 1440, "height": 900},
-            user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        )
-        self.page = await self.context.new_page()
-
-    async def close_browser(self):
-        """Safely closes Playwright browser instance."""
-        try:
-            if self.context:
-                await self.context.close()
-            if self.browser:
-                await self.browser.close()
-            if self.playwright:
-                await self.playwright.stop()
-        except Exception as e:
-            logger.error(f"Error closing browser: {e}")
-
-    async def check_login_required(self, page: Page, html_content: str, url: str) -> bool:
-        """Step 6: Checks if page or visible DOM overlays contain login forms, password inputs, or auth triggers."""
-        url_lower = url.lower()
-        if any(term in url_lower for term in ["/login", "/signin", "/auth", "/register"]):
-            return True
-            
-        content_lower = html_content.lower()
-        login_text_triggers = [
-            "please login", "login required", "sign in to continue", 
-            "forgot your password", "log in to your account", 
-            "don't have an account? sign up"
-        ]
-        if any(trigger in content_lower for trigger in login_text_triggers):
-            return True
-
-        # Check for visible password input fields or login forms in DOM
-        try:
-            pass_inputs = page.locator("input[type='password'], input[name*='pass']")
-            for i in range(await pass_inputs.count()):
-                if await pass_inputs.nth(i).is_visible():
-                    return True
-        except Exception:
-            pass
-
-        return False
-
-    async def run_investigation(
+# Define the new run_investigation method
+new_method = '''    async def run_investigation(
         self, 
         target_url: str, 
         investigation_id: str,
@@ -344,8 +255,18 @@ class PlaywrightInvestigationEngine:
             
         finally:
             await self.close_browser()
+'''
 
-    def _log(self, callback: Optional[Callable[[str, str], None]], inv_id: str, action: str, status: str):
-        self.db.log_action(inv_id, action, status)
-        if callback:
-            callback(action, status)
+# Find the start of the method
+start_idx = content.find("    async def run_investigation(")
+
+# Find the start of the next method _log
+end_idx = content.find("    def _log(")
+
+if start_idx != -1 and end_idx != -1:
+    new_content = content[:start_idx] + new_method + "\n" + content[end_idx:]
+    with open("core/browser_engine.py", "w") as f:
+        f.write(new_content)
+    print("SUCCESS: File rewritten.")
+else:
+    print("ERROR: Method not found.")
