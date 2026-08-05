@@ -7,8 +7,6 @@ from core.browser_engine import PlaywrightInvestigationEngine
 from ui.components import inject_custom_css
 from ui.dashboard import render_dashboard
 from config import DEFAULT_MAX_PAGES
-import threading
-from streamlit.runtime.scriptrunner import add_script_run_ctx
 
 # Page Configuration
 st.set_page_config(
@@ -61,15 +59,14 @@ with st.sidebar:
 st.markdown("### 🎯 Investigation Controls")
 url_input = st.text_input("Website URL", placeholder="https://parimatch.com", key="url_input")
 
-# Optional Auto-Login Credentials Section
-with st.expander("🔑 Auto-Login Credentials (Optional — Automated Authentication)", expanded=False):
-    c_auth_col1, c_auth_col2, c_auth_col3 = st.columns([2, 3, 3])
-    with c_auth_col1:
-        auth_mode = st.selectbox("Login Mode", ["Auto-Detect", "Phone / Mobile Number", "User ID / Username", "Email"], key="auth_mode")
-    with c_auth_col2:
-        auth_user = st.text_input("Username / Mobile / Email", placeholder="e.g. 9876543210 or Shinchan2001", key="auth_user")
-    with c_auth_col3:
-        auth_pass = st.text_input("Password", type="password", placeholder="Enter account password", key="auth_pass")
+with st.expander("🔑 Automated Login Credentials (Optional)", expanded=True):
+    col_u, col_p, col_m = st.columns([3, 3, 2])
+    with col_u:
+        auth_user = st.text_input("Username / Mobile Number / Email", placeholder="+91 9000158052", key="auth_user")
+    with col_p:
+        auth_pass = st.text_input("Password", type="password", key="auth_pass")
+    with col_m:
+        auth_mode = st.selectbox("Auth Mode", ["Auto-Detect", "Phone / Mobile Number", "User ID / Username", "Email"], key="auth_mode")
 
 col_start, col_stop, col_limit = st.columns([2, 2, 3])
 
@@ -83,7 +80,7 @@ with col_stop:
     stop_clicked = st.button("🛑 Stop Investigation", use_container_width=True, disabled=(st.session_state.status != "running"))
 
 # Handle Stop Button Click
-if stop_clicked and st.session_state.get("engine"):
+if stop_clicked and st.session_state.engine:
     st.session_state.engine.request_stop()
     st.warning("Stop request sent to crawler. Finalizing evidence collected so far...")
 
@@ -123,74 +120,29 @@ if start_clicked and url_input.strip():
         # Instantiate Browser Engine
         engine = PlaywrightInvestigationEngine(db_manager, max_pages=max_pages)
         st.session_state.engine = engine
-        st.session_state.progress_text = "🚀 Launching Playwright Engine..."
 
-        # Use thread-safe queues to pass data from background thread to Streamlit UI
-        import queue
-        if "prog_q" not in st.session_state: st.session_state.prog_q = queue.Queue()
-        if "log_q" not in st.session_state: st.session_state.log_q = queue.Queue()
-
-        # Run Async Playwright Workflow in Background Thread to Keep UI Unblocked
-        def run_crawler_thread():
-            try:
-                def safe_update_progress(msg):
-                    st.session_state.prog_q.put(msg)
-                
-                def safe_log(msg, level="INFO"):
-                    import time
-                    st.session_state.log_q.put(f"{time.strftime('%H:%M:%S')} | {level} | {msg}")
-
-                asyncio.run(engine.run_investigation(
-                    target_url=val_result["final_url"],
-                    investigation_id=investigation_id,
-                    log_callback=safe_log,
-                    auth_callback=trigger_auth_pause,
-                    progress_callback=safe_update_progress,
-                    auth_user=auth_user.strip() if auth_user else "",
-                    auth_pass=auth_pass.strip() if auth_pass else "",
-                    auth_mode=auth_mode
-                ))
-            except Exception as e:
-                import traceback
-                print(f"🔥 BACKGROUND THREAD ERROR: {e}")
-                traceback.print_exc()
-            finally:
-                st.session_state.status = "completed"
-                st.session_state.engine = None
-        
-        t = threading.Thread(target=run_crawler_thread, daemon=True)
-        add_script_run_ctx(t)
-        t.start()
+        # Run Async Playwright Workflow
+        with st.spinner("Investigating target website... Playwright headed browser active."):
+            res = asyncio.run(engine.run_investigation(
+                target_url=val_result["final_url"],
+                investigation_id=investigation_id,
+                log_callback=add_log,
+                auth_callback=trigger_auth_pause,
+                auth_user=auth_user.strip() if auth_user else "",
+                auth_pass=auth_pass.strip() if auth_pass else "",
+                auth_mode=auth_mode
+            ))
+            
+        st.session_state.status = "completed"
+        st.session_state.engine = None
         st.rerun()
 
-# Dynamic Progress Tracker using st.fragment
-@st.fragment(run_every="1s")
-def render_live_progress():
-    if st.session_state.status == "running":
-        # Pull latest progress & logs from thread-safe queues
-        if "prog_q" in st.session_state:
-            while not st.session_state.prog_q.empty():
-                st.session_state.progress_text = st.session_state.prog_q.get()
-        
-        if "log_q" in st.session_state:
-            while not st.session_state.log_q.empty():
-                st.session_state.logs.append(st.session_state.log_q.get())
-
-        st.info(f"⏳ {st.session_state.get('progress_text', 'Investigating...')}")
-        
-        if st.session_state.get("logs"):
-            st.markdown("### 📋 Live Investigation Logs")
-            with st.container():
-                for log in st.session_state.logs[-10:]:
-                    st.code(log)
-    elif st.session_state.status == "completed" and "engine" not in st.session_state:
-        # If thread marked as completed, force full page reload to show dashboard
-        st.session_state.engine = "CLEARED" # Prevent infinite rerun loop
-        st.rerun()
-
-# Call the dynamic fragment
-if st.session_state.status in ["running", "completed"]:
-    render_live_progress()
+# Render Real-time Logs if Running
+if st.session_state.status == "running" and st.session_state.logs:
+    st.markdown("### 📋 Live Investigation Logs")
+    with st.container():
+        for log in st.session_state.logs[-10:]:
+            st.code(log)
 
 # Step 12: Render Evidence Dashboard if Investigation is Selected / Completed
 if st.session_state.current_inv_id and st.session_state.status in ["completed", "stopped"]:

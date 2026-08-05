@@ -25,6 +25,7 @@ HIGH_PRIORITY_KEYWORDS = [
     "bonus", "referral", "rewards", "reward", "kyc", "profile", 
     "account", "add money", "cash out", "cashout", "login", "log in", 
     "sign in", "signin", "register", "sign up", "signup",
+    "phone number", "phone", "mobile", "mobile number", "email", "e-mail",
     
     # Financial Balance & Wallet Categories
     "my wallet", "balance", "available balance", "cash balance", 
@@ -91,7 +92,7 @@ CATEGORIZED_KEYWORDS = {
     "Authentication": [
         "login", "sign in", "signin", "register", "sign up", "signup", 
         "kyc", "verify", "verification", "otp", "password", "account", 
-        "forgot password", "join now", "register now"
+        "forgot password", "join now", "register now", "phone number", "phone", "mobile", "mobile number", "email", "e-mail"
     ],
     "Legal": [
         "terms", "privacy", "policy", "license", "terms of service", 

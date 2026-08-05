@@ -96,17 +96,56 @@ class PlaywrightInvestigationEngine:
 
         return False
 
+    async def highlight_and_click(self, locator, delay_after: float = 1.5):
+        """Highlights a DOM element with a glowing red highlight before clicking it (with forced overlay fallback)."""
+        try:
+            if await locator.is_visible():
+                await locator.evaluate("""el => {
+                    el.style.outline = '4px solid #FF0055';
+                    el.style.boxShadow = '0 0 20px #FF0055';
+                    el.style.transition = 'all 0.2s ease-in-out';
+                }""")
+                await asyncio.sleep(0.4)
+                try:
+                    await locator.click(timeout=3000)
+                except Exception:
+                    # Fallback to forced click if modal overlay intercepts pointer events
+                    await locator.click(force=True, timeout=3000)
+                await asyncio.sleep(delay_after)
+                return True
+        except Exception as e:
+            logger.debug(f"Click warning ({e})")
+        return False
+
+    async def scroll_page(self, max_scroll_px: int = 2500):
+        """Smoothly scrolls down the page to trigger lazy loading of images and links."""
+        try:
+            await self.page.evaluate(f"""async () => {{
+                await new Promise((resolve) => {{
+                    let totalHeight = 0;
+                    let distance = 350;
+                    let timer = setInterval(() => {{
+                        let scrollHeight = document.body.scrollHeight;
+                        window.scrollBy(0, distance);
+                        totalHeight += distance;
+                        if(totalHeight >= scrollHeight || totalHeight >= {max_scroll_px}){{
+                            clearInterval(timer);
+                            resolve();
+                        }}
+                    }}, 100);
+                }});
+            }}""")
+            await asyncio.sleep(1.0)
+        except Exception:
+            pass
+
     async def run_investigation(
         self, 
         target_url: str, 
         investigation_id: str,
-        log_callback=None,
-        auth_callback=None,
-        progress_callback=None,
-        auth_user: str = "",
-        auth_pass: str = "",
-        auth_mode: str = "Auto-Detect"
-    ) -> dict:
+        log_callback: Optional[Callable[[str, str], None]] = None,
+        auth_callback: Optional[Callable[[], None]] = None
+    ) -> Dict[str, Any]:
         """
         Executes the full automated behavioral collection workflow (Deposit, Sports, Casino).
         """
@@ -114,239 +153,205 @@ class PlaywrightInvestigationEngine:
         self.db.create_investigation(investigation_id, target_url)
         self._log(log_callback, investigation_id, f"Started behavioral investigation for {target_url}", "INFO")
 
+        deposit_inspected = False
         login_encountered = False
-        pages_visited_count = 0
 
-        # Helper method for evidence extraction
-        async def _extract_and_save_evidence(mission_name: str, priority: str):
-            nonlocal pages_visited_count
-            if self.stop_requested: return
-            
-            pages_visited_count += 1
-            page_url = self.page.url
-            page_html = await self.page.content()
-            page_title = f"{mission_name} - {await self.page.title() or page_url}"
-            
-            # Save Page Record
-            page_id = self.db.add_page(investigation_id, page_url, page_title, priority)
-            self.db.add_navigation_link(investigation_id, "ROOT", page_url, pages_visited_count)
-
-            import asyncio
-            keyword_findings = await self.keyword_detector.detect_and_locate_keywords(self.page)
-            if keyword_findings: self.db.add_keyword_findings(page_id, keyword_findings)
-            payment_findings = await self.payment_detector.detect_payment_indicators(self.page, page_html)
-            if payment_findings: self.db.add_payment_findings(page_id, payment_findings)
-
-            if progress_callback: progress_callback(f"Capturing Evidence for {mission_name}...")
-            
-            raw_screenshot = await self.page.screenshot(full_page=False)
-            screenshot_filename = f"inv_{investigation_id}_page_{page_id}.png"
-            highlighted_path = __import__("core.image_annotator", fromlist=["ImageAnnotator"]).ImageAnnotator.annotate_and_save_screenshot(
-                raw_screenshot, screenshot_filename, keyword_findings, payment_findings
-            )
-            self.db.add_screenshot(page_id, highlighted_path)
-
-        import asyncio
         try:
             await self.init_browser()
             
-            # --- PHASE 1: BOOT & AUTHENTICATION ---
-            if progress_callback: progress_callback("Phase 1: Booting Homepage & Authentication...")
+            # Step 3: Launch Playwright & Open Homepage
             self._log(log_callback, investigation_id, "Opening Homepage...", "INFO")
-            try: await self.page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
-            except Exception: pass
-            await asyncio.sleep(2) 
+            await self.page.goto(target_url, wait_until="domcontentloaded", timeout=DEFAULT_RENDER_TIMEOUT)
+            await asyncio.sleep(2) # Wait for dynamic rendering
 
-            page_html = await self.page.content()
-            page_url = self.page.url
+            homepage_url = self.page.url
+            homepage_html = await self.page.content()
 
-            try:
-                login_btn = self.page.locator("button:has-text('Log in'), a:has-text('Log in'), button:has-text('Sign in'), a:has-text('Sign in')").first
-                if await login_btn.is_visible():
-                    self._log(log_callback, investigation_id, "Found 'Log in' button. Clicking to open login modal...", "INFO")
-                    await login_btn.click()
-                    await asyncio.sleep(2.0)
-            except Exception: pass
+            # Add homepage as initial target
+            queue.append({"url": homepage_url, "anchor_text": "Homepage", "priority": "High"})
+
+            # Step 7: Investigate Pages in Priority Queue
+            pages_visited_count = 0
+
+            while queue and pages_visited_count < self.max_pages:
+                if self.stop_requested:
+                    self._log(log_callback, investigation_id, "Investigation manually stopped by user.", "WARNING")
+                    break
+
+                target = queue.pop(0)
+                page_url = target["url"]
+                priority = target["priority"]
+
+                if page_url in visited_urls:
+                    continue
+
+                visited_urls.add(page_url)
+                pages_visited_count += 1
+
+                self._log(log_callback, investigation_id, f"[{pages_visited_count}/{self.max_pages}] Investigating ({priority}): {page_url}", "INFO")
+
+                try:
+                    if page_url != self.page.url:
+                        await self.page.goto(page_url, wait_until="domcontentloaded", timeout=DEFAULT_RENDER_TIMEOUT)
+                        await asyncio.sleep(1.5)
+
+                    # Auto-trigger Login Modal ONCE if login button is visible and auth not done
+                    if not login_encountered:
+                        try:
+                            login_btn = self.page.locator("button:has-text('Log in'), a:has-text('Log in'), button:has-text('Sign in'), a:has-text('Sign in')").first
+                            if await login_btn.is_visible():
+                                self._log(log_callback, investigation_id, "Found visible 'Log in' button. Clicking to open login modal...", "INFO")
+                                await login_btn.click()
+                                await asyncio.sleep(1.5)
+                        except Exception:
+                            pass
 
             # Refresh DOM state because clicking login might have spawned a modal or SPA route
             page_html = await self.page.content()
             page_url = self.page.url
 
-            if await self.check_login_required(self.page, page_html, page_url):
-                login_encountered = True
-                auto_login_success = False
-                if auth_user and auth_pass:
-                    self._log(log_callback, investigation_id, f"🔑 Credentials provided! Executing automated login...", "INFO")
-                    try:
-                        if auth_mode == "Phone / Mobile Number" or (auth_user.replace("+", "").isdigit() and len(auth_user) >= 10):
-                            tab = self.page.locator("text=/Phone number|Mobile No|Mobile/i").first
-                            if await tab.is_visible(): await tab.click(); await asyncio.sleep(0.5)
-                        elif auth_mode == "User ID / Username" or ("@" not in auth_user and not auth_user.isdigit()):
-                            tab = self.page.locator("text=/User ID|Account number|Username/i").first
-                            if await tab.is_visible(): await tab.click(); await asyncio.sleep(0.5)
-                        elif auth_mode == "Email" or "@" in auth_user:
-                            tab = self.page.locator("text=/E-mail|Email/i").first
-                            if await tab.is_visible(): await tab.click(); await asyncio.sleep(0.5)
-
-                        user_inputs = self.page.locator("input[type='tel'], input[type='email'], input[placeholder*='number' i], input[placeholder*='User' i], input[placeholder*='Phone' i], input[name*='user' i], input[name*='phone' i], input[type='text']")
-                        for i in range(await user_inputs.count()):
-                            target = user_inputs.nth(i)
-                            if await target.is_visible():
-                                await target.click()
-                                await target.press_sequentially(auth_user, delay=50)
-                                await asyncio.sleep(0.5)
-                                break
+                    # Step 6: Per-Page Auth / Login Modal Detection & Manual Auth Pause
+                    if await self.check_login_required(self.page, page_html, page_url):
+                        login_encountered = True
+                        self._log(log_callback, investigation_id, f"🔑 Login Required / Auth Form detected on {page_url}! Please log in in the browser window on screen...", "WARNING")
                         
-                        pass_inputs = self.page.locator("input[type='password'], input[name='password'], input[placeholder*='Password' i]")
-                        for i in range(await pass_inputs.count()):
-                            target = pass_inputs.nth(i)
-                            if await target.is_visible():
-                                await target.click()
-                                await target.press_sequentially(auth_pass, delay=50)
-                                await asyncio.sleep(0.5)
-                                break
-                                
-                        submit_btn = self.page.locator("button:has-text('Log in'), button:has-text('LOGIN'), button:has-text('Sign in'), button[type='submit'], input[type='submit']").first
-                        if await submit_btn.is_visible(): await submit_btn.click(); await asyncio.sleep(3.0)
-
-                        if not await self.check_login_required(self.page, await self.page.content(), self.page.url):
-                            self._log(log_callback, investigation_id, f"✅ Automated login successful!", "INFO")
-                            auto_login_success = True
-                    except Exception as auto_err:
-                        self._log(log_callback, investigation_id, f"Auto-login failed. Falling back to manual auth...", "WARNING")
-
-                if not auto_login_success:
-                    self._log(log_callback, investigation_id, f"🔑 Manual Login Required! Please log in in the browser window...", "WARNING")
-                    self.pause_for_auth = True
-                    if auth_callback: auth_callback()
-                    self.auth_resumed.clear()
-
-                    while self.pause_for_auth and not self.stop_requested:
-                        if self.auth_resumed.is_set(): self.pause_for_auth = False; break
-                        await asyncio.sleep(1)
                         try:
-                            if not await self.check_login_required(self.page, await self.page.content(), self.page.url):
-                                self._log(log_callback, investigation_id, f"✅ Manual login detected! Auto-resuming...", "INFO")
-                                self.pause_for_auth = False; break
-                        except Exception: pass
+                            await self.page.bring_to_front()
+                        except Exception:
+                            pass
 
-                self._log(log_callback, investigation_id, "Waiting 4 seconds for SPA Dashboard to fully render...", "INFO")
-                await asyncio.sleep(4.0)
+                        self.pause_for_auth = True
+                        if auth_callback:
+                            auth_callback()
+                        
+                        self.auth_resumed.clear()
 
-            try:
-                cancel_btn = self.page.locator("button:has-text('Cancel'), [aria-label='Close'], button:has-text('✕')").first
-                if await cancel_btn.is_visible(): await cancel_btn.click(); await asyncio.sleep(0.5)
-            except: pass
-
-            # --- PHASE 2: MISSION 1 (WALLET & DEPOSIT) ---
-            if not self.stop_requested:
-                if progress_callback: progress_callback("Mission 1: Executing Wallet & Deposit Flow...")
-                self._log(log_callback, investigation_id, "Mission 1: Starting Wallet/Deposit exploration.", "INFO")
-                try:
-                    deposit_selector = "button:has-text('Deposit'), a:has-text('Deposit'), button:has-text('Recharge'), a:has-text('Recharge'), button:has-text('Cashier'), a:has-text('Cashier'), button:has-text('Add Money')"
-                    deposit_btn = self.page.locator(deposit_selector).first
-                    if await deposit_btn.is_visible():
-                        await deposit_btn.click()
-                        await asyncio.sleep(3.0)
-
-                        upi_card_selectors = [
-                            "text=/Other UPI|PhonePe|Paytm|UPI|Pay Tm|Phone Pe/i",
-                            "div:has-text('Other UPI'):not(:has(*))", "div:has-text('PhonePe'):not(:has(*))", 
-                            "div:has-text('Paytm'):not(:has(*))", "div:has-text('UPI'):not(:has(*))"
-                        ]
-                        payment_clicked = False
-                        for sel in upi_card_selectors:
+                        # Smart Auto-Resume Polling Loop
+                        while self.pause_for_auth and not self.stop_requested:
+                            if self.auth_resumed.is_set():
+                                self.pause_for_auth = False
+                                break
+                            
+                            await asyncio.sleep(1)
+                            
                             try:
-                                card = self.page.locator(sel).first
-                                if await card.is_visible():
-                                    await card.click()
-                                    await asyncio.sleep(2.0)
-                                    payment_clicked = True
+                                current_url = self.page.url
+                                current_html = await self.page.content()
+                                if not await self.check_login_required(self.page, current_html, current_url):
+                                    self._log(log_callback, investigation_id, f"✅ Manual login detected in browser ({current_url})! Auto-resuming crawl...", "INFO")
+                                    self.pause_for_auth = False
                                     break
-                            except Exception: continue
+                            except Exception:
+                                pass
 
-                        if payment_clicked:
-                            try:
-                                amount_btn = self.page.locator("button:has-text('500'), div:has-text('500')").first
-                                if await amount_btn.is_visible(): await amount_btn.click(); await asyncio.sleep(1.0)
-                                
-                                submit_pay_btn = self.page.locator("button:has-text('Continue'), button:has-text('Deposit'), button:has-text('Pay')").first
-                                if await submit_pay_btn.is_visible():
-                                    await submit_pay_btn.click()
-                                    await asyncio.sleep(4.0)
-                            except Exception: pass
+                        if self.stop_requested:
+                            self._log(log_callback, investigation_id, "Investigation stopped during authentication pause.", "WARNING")
+                            break
 
-                        try: await self.page.wait_for_selector("text=/@|UPI ID|Scan QR/i", timeout=4000)
-                        except Exception: pass
-                        
-                        await _extract_and_save_evidence("Deposit & Wallet Flow", "High")
-                        
+                        # Refresh page details after manual login
+                        page_url = self.page.url
+                        page_html = await self.page.content()
+                        page_title = await self.page.title() or page_url
+                        self._log(log_callback, investigation_id, f"Resumed investigation after manual authentication.", "INFO")
+
+                    # Deep Deposit & Payment QR Code Inspection Flow (Runs ONCE after login)
+                    if login_encountered and not deposit_inspected:
                         try:
-                            cancel_btn = self.page.locator("button:has-text('Cancel'), [aria-label='Close'], button:has-text('✕')").first
-                            if await cancel_btn.is_visible(): await cancel_btn.click(); await asyncio.sleep(1.0)
-                            else: await self.page.keyboard.press("Escape")
-                        except Exception: pass
-                except Exception as e:
-                    self._log(log_callback, investigation_id, f"Mission 1 failed: {e}", "WARNING")
+                            deposit_selector = "button:has-text('Deposit'), a:has-text('Deposit'), button:has-text('Recharge'), a:has-text('Recharge'), button:has-text('Cashier'), a:has-text('Cashier'), button:has-text('Add Money')"
+                            deposit_btn = self.page.locator(deposit_selector).first
+                            if await deposit_btn.is_visible():
+                                deposit_inspected = True
+                                self._log(log_callback, investigation_id, f"Navigating to Deposit section to inspect payment options & QR codes...", "INFO")
+                                await deposit_btn.click()
+                                await asyncio.sleep(2.5)
 
-            # --- PHASE 3: MISSION 2 (SPORTS BETTING) ---
-            if not self.stop_requested:
-                if progress_callback: progress_callback("Mission 2: Executing Sports Betting Flow...")
-                self._log(log_callback, investigation_id, "Mission 2: Starting Sports Betting exploration.", "INFO")
-                try:
-                    await self.page.goto(target_url, wait_until="domcontentloaded")
-                    await asyncio.sleep(2.0)
-                    
-                    sports_btn = self.page.locator("a:has-text('Sports'), button:has-text('Sports'), text=/Sports/i").first
-                    if await sports_btn.is_visible():
-                        await sports_btn.click()
-                        await asyncio.sleep(3.0)
-                        
-                        sport_cat = self.page.locator("text=/Cricket|Football/i").first
-                        if await sport_cat.is_visible():
-                            await sport_cat.click()
-                            await asyncio.sleep(2.0)
-                            
-                            odd_btn = self.page.locator("button:has-text('.'), div.odd, span.odd-value").nth(2)
-                            if await odd_btn.is_visible():
-                                await odd_btn.click()
-                                await asyncio.sleep(2.0)
+                                # 1. Locate and click UPI / Paytm / PhonePe method card
+                                upi_card_selectors = [
+                                    "div:has-text('UPI'):not(:has(*))",
+                                    "div:has-text('Pay Tm'):not(:has(*))",
+                                    "div:has-text('Paytm'):not(:has(*))",
+                                    "div:has-text('Phone Pe'):not(:has(*))",
+                                    "text=/UPI|Pay Tm|Paytm|Phone Pe/i"
+                                ]
                                 
-                                stake_input = self.page.locator("input[placeholder*='Stake' i], input[placeholder*='Amount' i]").first
-                                if await stake_input.is_visible():
-                                    await stake_input.fill("10")
-                                    await asyncio.sleep(1.0)
-                                    
-                        await _extract_and_save_evidence("Sports Betting Flow", "Medium")
-                except Exception as e:
-                    self._log(log_callback, investigation_id, f"Mission 2 failed: {e}", "WARNING")
+                                payment_clicked = False
+                                for sel in upi_card_selectors:
+                                    try:
+                                        card = self.page.locator(sel).first
+                                        if await card.is_visible():
+                                            self._log(log_callback, investigation_id, f"Clicking Payment Method card: '{sel}'...", "INFO")
+                                            await card.click()
+                                            await asyncio.sleep(2.0)
+                                            payment_clicked = True
+                                            break
+                                    except Exception:
+                                        continue
 
-            # --- PHASE 4: MISSION 3 (CASINO & INSTANT GAMES) ---
-            if not self.stop_requested:
-                if progress_callback: progress_callback("Mission 3: Executing Casino & Aviator Flow...")
-                self._log(log_callback, investigation_id, "Mission 3: Starting Casino/Aviator exploration.", "INFO")
-                try:
-                    await self.page.goto(target_url, wait_until="domcontentloaded")
-                    await asyncio.sleep(2.0)
+                                # 2. Handle pre-set deposit amount or Continue button if prompted
+                                if payment_clicked:
+                                    try:
+                                        amount_btn = self.page.locator("button:has-text('500'), button:has-text('1000'), div:has-text('500')").first
+                                        if await amount_btn.is_visible():
+                                            await amount_btn.click()
+                                            await asyncio.sleep(1.0)
+
+                                        submit_pay_btn = self.page.locator("button:has-text('Continue'), button:has-text('Deposit'), button:has-text('Pay')").first
+                                        if await submit_pay_btn.is_visible():
+                                            self._log(log_callback, investigation_id, "Clicking 'Continue/Deposit' to generate active QR code & UPI VPA...", "INFO")
+                                            await submit_pay_btn.click()
+                                            await asyncio.sleep(3.0) # Wait for QR code image or payment gateway iframe to render
+                                    except Exception as sub_err:
+                                        logger.debug(f"Amount submit error: {sub_err}")
+
+                                page_url = self.page.url
+                                page_html = await self.page.content()
+                                page_title = await self.page.title() or "Deposit Payment Page"
+                        except Exception as dep_err:
+                            logger.debug(f"Deposit flow error: {dep_err}")
+
+                    # Step 4 & 5: Dynamic Queue Expansion (Extract new links on this page)
+                    new_discovered = nav_engine.extract_and_prioritize_links(page_html, page_url)
+                    for link in new_discovered:
+                        if link["url"] not in visited_urls and link["url"] not in [q["url"] for q in queue]:
+                            queue.append(link)
+
+                    # Re-sort queue by priority: High -> Medium -> Low
+                    priority_rank = {"High": 1, "Medium": 2, "Low": 3}
+                    queue.sort(key=lambda x: priority_rank.get(x["priority"], 2))
+
+                    # Save Page Record
+                    page_id = self.db.add_page(investigation_id, page_url, page_title, priority)
+
+                    # Save Navigation Link Graph
+                    self.db.add_navigation_link(investigation_id, homepage_url if pages_visited_count > 1 else "ROOT", page_url, 1 if pages_visited_count > 1 else 0)
+
+                    # Step 8: Keyword Detection
+                    keyword_findings = await self.keyword_detector.detect_and_locate_keywords(self.page)
+                    if keyword_findings:
+                        self.db.add_keyword_findings(page_id, keyword_findings)
+
+                    # Step 10: Payment Detection
+                    payment_findings = await self.payment_detector.detect_payment_indicators(self.page, page_html)
+                    if payment_findings:
+                        self.db.add_payment_findings(page_id, payment_findings)
+
+                    # Step 9: Screenshot Capture & OpenCV Annotation
+                    raw_screenshot = await self.page.screenshot(full_page=False)
+                    screenshot_filename = f"inv_{investigation_id}_page_{page_id}.png"
                     
-                    casino_btn = self.page.locator("a:has-text('Casino'), button:has-text('Casino'), a:has-text('Instant Games')").first
-                    if await casino_btn.is_visible():
-                        await casino_btn.click()
-                        await asyncio.sleep(3.0)
-                        
-                        game_card = self.page.locator("text=/Aviator|JetX/i").first
-                        if await game_card.is_visible():
-                            await game_card.click()
-                            await asyncio.sleep(4.0)
-                            
-                        await _extract_and_save_evidence("Casino Game Canvas Flow", "Medium")
-                except Exception as e:
-                    self._log(log_callback, investigation_id, f"Mission 3 failed: {e}", "WARNING")
+                    highlighted_path = ImageAnnotator.annotate_and_save_screenshot(
+                        raw_screenshot, screenshot_filename, keyword_findings, payment_findings
+                    )
+
+                    self.db.add_screenshot(page_id, highlighted_path)
+
+                except Exception as page_err:
+                    self._log(log_callback, investigation_id, f"Error investigating {page_url}: {page_err}", "ERROR")
 
             status = "STOPPED" if self.stop_requested else "COMPLETED"
-            duration = __import__("time").time() - start_time
+            duration = time.time() - start_time
             self.db.update_investigation(investigation_id, status, duration, pages_visited_count, login_encountered)
-            self._log(log_callback, investigation_id, f"Investigation {status}. Missions Executed: {pages_visited_count}, Duration: {duration:.2f}s", "INFO")
+            self._log(log_callback, investigation_id, f"Investigation {status}. Total pages: {pages_visited_count}, Duration: {duration:.2f}s", "INFO")
 
             return {
                 "status": status,
@@ -357,9 +362,8 @@ class PlaywrightInvestigationEngine:
 
         except Exception as err:
             self._log(log_callback, investigation_id, f"Fatal Investigation Error: {err}", "ERROR")
-            self.db.update_investigation(investigation_id, "FAILED", __import__("time").time() - start_time, 0, login_encountered)
-            return {"status": "FAILED"}
-            
+            self.db.update_investigation(investigation_id, "FAILED", time.time() - start_time, 0, login_encountered)
+            return {"status": "FAILED", "error": str(err), "investigation_id": investigation_id}
         finally:
             await self.close_browser()
 
