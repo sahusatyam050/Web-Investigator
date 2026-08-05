@@ -125,24 +125,35 @@ if start_clicked and url_input.strip():
         st.session_state.engine = engine
         st.session_state.progress_text = "🚀 Launching Playwright Engine..."
 
+        # Use thread-safe queues to pass data from background thread to Streamlit UI
+        import queue
+        if "prog_q" not in st.session_state: st.session_state.prog_q = queue.Queue()
+        if "log_q" not in st.session_state: st.session_state.log_q = queue.Queue()
+
         # Run Async Playwright Workflow in Background Thread to Keep UI Unblocked
         def run_crawler_thread():
             try:
-                def update_progress(msg):
-                    st.session_state.progress_text = msg
-                    
+                def safe_update_progress(msg):
+                    st.session_state.prog_q.put(msg)
+                
+                def safe_log(msg, level="INFO"):
+                    import time
+                    st.session_state.log_q.put(f"{time.strftime('%H:%M:%S')} | {level} | {msg}")
+
                 asyncio.run(engine.run_investigation(
                     target_url=val_result["final_url"],
                     investigation_id=investigation_id,
-                    log_callback=add_log,
+                    log_callback=safe_log,
                     auth_callback=trigger_auth_pause,
-                    progress_callback=update_progress,
+                    progress_callback=safe_update_progress,
                     auth_user=auth_user.strip() if auth_user else "",
                     auth_pass=auth_pass.strip() if auth_pass else "",
                     auth_mode=auth_mode
                 ))
             except Exception as e:
-                pass
+                import traceback
+                print(f"🔥 BACKGROUND THREAD ERROR: {e}")
+                traceback.print_exc()
             finally:
                 st.session_state.status = "completed"
                 st.session_state.engine = None
@@ -156,6 +167,15 @@ if start_clicked and url_input.strip():
 @st.fragment(run_every="1s")
 def render_live_progress():
     if st.session_state.status == "running":
+        # Pull latest progress & logs from thread-safe queues
+        if "prog_q" in st.session_state:
+            while not st.session_state.prog_q.empty():
+                st.session_state.progress_text = st.session_state.prog_q.get()
+        
+        if "log_q" in st.session_state:
+            while not st.session_state.log_q.empty():
+                st.session_state.logs.append(st.session_state.log_q.get())
+
         st.info(f"⏳ {st.session_state.get('progress_text', 'Investigating...')}")
         
         if st.session_state.get("logs"):
