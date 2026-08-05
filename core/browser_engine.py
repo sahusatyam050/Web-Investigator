@@ -96,6 +96,45 @@ class PlaywrightInvestigationEngine:
 
         return False
 
+    async def highlight_and_click(self, locator, delay_after: float = 1.5):
+        """Highlights a DOM element with a glowing red highlight before clicking it."""
+        try:
+            if await locator.is_visible():
+                await locator.evaluate("""el => {
+                    el.style.outline = '4px solid #FF0055';
+                    el.style.boxShadow = '0 0 20px #FF0055';
+                    el.style.transition = 'all 0.2s ease-in-out';
+                }""")
+                await asyncio.sleep(0.4)
+                await locator.click()
+                await asyncio.sleep(delay_after)
+                return True
+        except Exception:
+            pass
+        return False
+
+    async def scroll_page(self, max_scroll_px: int = 2500):
+        """Smoothly scrolls down the page to trigger lazy loading of images and links."""
+        try:
+            await self.page.evaluate(f"""async () => {{
+                await new Promise((resolve) => {{
+                    let totalHeight = 0;
+                    let distance = 350;
+                    let timer = setInterval(() => {{
+                        let scrollHeight = document.body.scrollHeight;
+                        window.scrollBy(0, distance);
+                        totalHeight += distance;
+                        if(totalHeight >= scrollHeight || totalHeight >= {max_scroll_px}){{
+                            clearInterval(timer);
+                            resolve();
+                        }}
+                    }}, 100);
+                }});
+            }}""")
+            await asyncio.sleep(1.0)
+        except Exception:
+            pass
+
     async def run_investigation(
         self, 
         target_url: str, 
@@ -130,18 +169,17 @@ class PlaywrightInvestigationEngine:
                 await self.page.goto(target_url, wait_until="domcontentloaded", timeout=DEFAULT_RENDER_TIMEOUT)
             except Exception as goto_err:
                 self._log(log_callback, investigation_id, f"Initial page load warning ({goto_err}). Proceeding with current DOM...", "WARNING")
-            await asyncio.sleep(2) # Wait for dynamic rendering
+            await asyncio.sleep(2.5) # Wait for dynamic rendering
 
             homepage_url = self.page.url
             homepage_html = await self.page.content()
 
             # --- ROOT-LEVEL AUTHENTICATION CHECK ---
             try:
-                login_btn = self.page.locator("button:has-text('Log in'), a:has-text('Log in'), button:has-text('Sign in'), a:has-text('Sign in')").first
+                login_btn = self.page.locator("button:has-text('Log in'), a:has-text('Log in'), button:has-text('Sign in'), a:has-text('Sign in'), button:has-text('LOGIN'), a:has-text('LOGIN')").first
                 if await login_btn.is_visible():
-                    self._log(log_callback, investigation_id, "Found visible 'Log in' button on homepage. Clicking to open login modal...", "INFO")
-                    await login_btn.click()
-                    await asyncio.sleep(2.0)
+                    self._log(log_callback, investigation_id, "Found visible 'Log in' button on homepage. Clicking with visual highlight...", "INFO")
+                    await self.highlight_and_click(login_btn, delay_after=2.0)
             except Exception:
                 pass
 
@@ -155,44 +193,55 @@ class PlaywrightInvestigationEngine:
                 if auth_user and auth_pass:
                     self._log(log_callback, investigation_id, f"🔑 Credentials provided for '{auth_user}'! Executing automated login...", "INFO")
                     try:
-                        # Sub-tab switching
+                        await asyncio.sleep(1.5) # Allow login form DOM to settle
+                        
+                        # Sub-tab switching if mobile/email tabs exist
                         if auth_mode == "Phone / Mobile Number" or (auth_user.replace("+", "").isdigit() and len(auth_user) >= 10):
-                            tab = self.page.locator("text=/Phone number|Mobile No|Mobile/i").first
-                            if await tab.is_visible(): await tab.click(); await asyncio.sleep(0.5)
+                            tab = self.page.locator("text=/Phone number|Mobile No|Mobile|Phone/i").first
+                            await self.highlight_and_click(tab, delay_after=0.5)
                         elif auth_mode == "User ID / Username" or ("@" not in auth_user and not auth_user.isdigit()):
                             tab = self.page.locator("text=/User ID|Account number|Username/i").first
-                            if await tab.is_visible(): await tab.click(); await asyncio.sleep(0.5)
+                            await self.highlight_and_click(tab, delay_after=0.5)
                         elif auth_mode == "Email" or "@" in auth_user:
                             tab = self.page.locator("text=/E-mail|Email/i").first
-                            if await tab.is_visible(): await tab.click(); await asyncio.sleep(0.5)
+                            await self.highlight_and_click(tab, delay_after=0.5)
 
                         # Fill Username / Mobile input
-                        user_inputs = self.page.locator("input[type='tel'], input[type='email'], input[placeholder*='number' i], input[placeholder*='User' i], input[placeholder*='Phone' i], input[name*='user' i], input[name*='phone' i], input[type='text']")
+                        user_inputs = self.page.locator("input[type='tel'], input[type='email'], input[placeholder*='number' i], input[placeholder*='User' i], input[placeholder*='Phone' i], input[placeholder*='Mobile' i], input[name*='user' i], input[name*='phone' i], input[name*='login' i], input[type='text']")
+                        user_filled = False
                         for i in range(await user_inputs.count()):
                             target = user_inputs.nth(i)
                             if await target.is_visible():
+                                await target.evaluate("el => el.style.outline = '4px solid #00FF66'")
                                 await target.click()
+                                await target.fill("")
                                 await target.press_sequentially(auth_user, delay=50)
                                 await asyncio.sleep(0.5)
+                                user_filled = True
                                 break
 
                         # Fill Password input
-                        pass_inputs = self.page.locator("input[type='password'], input[name='password'], input[placeholder*='Password' i]")
+                        pass_inputs = self.page.locator("input[type='password'], input[name*='pass' i], input[placeholder*='Password' i]")
+                        pass_filled = False
                         for i in range(await pass_inputs.count()):
                             target = pass_inputs.nth(i)
                             if await target.is_visible():
+                                await target.evaluate("el => el.style.outline = '4px solid #00FF66'")
                                 await target.click()
+                                await target.fill("")
                                 await target.press_sequentially(auth_pass, delay=50)
                                 await asyncio.sleep(0.5)
+                                pass_filled = True
                                 break
 
-                        # Click Submit button
-                        submit_btn = self.page.locator("button:has-text('Log in'), button:has-text('LOGIN'), button:has-text('Sign in'), button[type='submit'], input[type='submit']").first
-                        if await submit_btn.is_visible(): await submit_btn.click(); await asyncio.sleep(3.0)
+                        if user_filled and pass_filled:
+                            submit_btn = self.page.locator("button:has-text('Log in'), button:has-text('LOGIN'), button:has-text('Sign in'), button[type='submit'], input[type='submit']").first
+                            self._log(log_callback, investigation_id, "Submitting login form...", "INFO")
+                            await self.highlight_and_click(submit_btn, delay_after=3.5)
 
-                        if not await self.check_login_required(self.page, await self.page.content(), self.page.url):
-                            self._log(log_callback, investigation_id, f"✅ Automated login successful for '{auth_user}'!", "INFO")
-                            auto_login_success = True
+                            if not await self.check_login_required(self.page, await self.page.content(), self.page.url):
+                                self._log(log_callback, investigation_id, f"✅ Automated login successful for '{auth_user}'!", "INFO")
+                                auto_login_success = True
                     except Exception as auto_err:
                         self._log(log_callback, investigation_id, f"Auto-login failed ({auto_err}). Falling back to manual auth...", "WARNING")
 
@@ -253,6 +302,9 @@ class PlaywrightInvestigationEngine:
                             self._log(log_callback, investigation_id, f"Navigation timeout on {page_url}, proceeding with available DOM...", "WARNING")
                         await asyncio.sleep(1.5)
 
+                    # Smooth scroll page down to lazy load content and footer links
+                    await self.scroll_page(max_scroll_px=2000)
+
                     page_title = await self.page.title() or page_url
                     page_html = await self.page.content()
 
@@ -264,8 +316,7 @@ class PlaywrightInvestigationEngine:
                             if await deposit_btn.is_visible():
                                 deposit_inspected = True
                                 self._log(log_callback, investigation_id, f"Navigating to Deposit section to inspect payment options & QR codes...", "INFO")
-                                await deposit_btn.click()
-                                await asyncio.sleep(2.5)
+                                await self.highlight_and_click(deposit_btn, delay_after=2.5)
 
                                 # Locate and click UPI / Paytm / PhonePe method card
                                 upi_card_selectors = [
@@ -282,8 +333,7 @@ class PlaywrightInvestigationEngine:
                                         card = self.page.locator(sel).first
                                         if await card.is_visible():
                                             self._log(log_callback, investigation_id, f"Clicking Payment Method card: '{sel}'...", "INFO")
-                                            await card.click()
-                                            await asyncio.sleep(2.0)
+                                            await self.highlight_and_click(card, delay_after=2.0)
                                             payment_clicked = True
                                             break
                                     except Exception:
@@ -294,14 +344,12 @@ class PlaywrightInvestigationEngine:
                                     try:
                                         amount_btn = self.page.locator("button:has-text('500'), button:has-text('1000'), div:has-text('500')").first
                                         if await amount_btn.is_visible():
-                                            await amount_btn.click()
-                                            await asyncio.sleep(1.0)
+                                            await self.highlight_and_click(amount_btn, delay_after=1.0)
 
                                         submit_pay_btn = self.page.locator("button:has-text('Continue'), button:has-text('Deposit'), button:has-text('Pay')").first
                                         if await submit_pay_btn.is_visible():
                                             self._log(log_callback, investigation_id, "Clicking 'Continue/Deposit' to generate active QR code & UPI VPA...", "INFO")
-                                            await submit_pay_btn.click()
-                                            await asyncio.sleep(3.0)
+                                            await self.highlight_and_click(submit_pay_btn, delay_after=3.0)
                                     except Exception as sub_err:
                                         logger.debug(f"Amount submit error: {sub_err}")
 
@@ -353,7 +401,7 @@ class PlaywrightInvestigationEngine:
             # Finalize Investigation Status
             status = "STOPPED" if self.stop_requested else "COMPLETED"
             duration = time.time() - start_time
-            self.db.update_investigation(investigation_id, status, duration, pages_visited_count, login_encountered)
+            self.db.update_investigation(investigation_id, status, duration, pages_visited_count, login_completed)
             self._log(log_callback, investigation_id, f"Investigation {status}. Total pages: {pages_visited_count}, Duration: {duration:.2f}s", "INFO")
 
             return {
@@ -365,7 +413,7 @@ class PlaywrightInvestigationEngine:
 
         except Exception as err:
             self._log(log_callback, investigation_id, f"Fatal Investigation Error: {err}", "ERROR")
-            self.db.update_investigation(investigation_id, "FAILED", time.time() - start_time, 0, login_encountered)
+            self.db.update_investigation(investigation_id, "FAILED", time.time() - start_time, 0, login_completed)
             return {"status": "FAILED", "error": str(err), "investigation_id": investigation_id}
         finally:
             await self.close_browser()
