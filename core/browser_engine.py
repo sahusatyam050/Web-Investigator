@@ -80,17 +80,18 @@ class PlaywrightInvestigationEngine:
         content_lower = html_content.lower()
         login_text_triggers = [
             "please login", "login required", "sign in to continue", 
-            "enter password", "forgot your password", "account number",
-            "continue with google", "log in to your account"
+            "forgot your password", "log in to your account", 
+            "don't have an account? sign up"
         ]
         if any(trigger in content_lower for trigger in login_text_triggers):
             return True
 
         # Check for visible password input fields or login forms in DOM
         try:
-            password_count = await page.locator("input[type='password'], input[name*='pass']").count()
-            if password_count > 0:
-                return True
+            pass_inputs = page.locator("input[type='password'], input[name*='pass']")
+            for i in range(await pass_inputs.count()):
+                if await pass_inputs.nth(i).is_visible():
+                    return True
         except Exception:
             pass
 
