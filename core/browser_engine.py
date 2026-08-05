@@ -345,9 +345,6 @@ class PlaywrightInvestigationEngine:
 
             # Prevent crawler from ever visiting login/auth pages during deep crawl
             login_terms = ["/login", "/signin", "/auth", "/register", "/signup"]
-            visited_urls.add("https://parimatchs123.com/en/login")
-            visited_urls.add("https://parimatchs123.com/login")
-            visited_urls.add(self.page.url)
 
             # Refresh homepage state after login
             homepage_url = self.page.url
