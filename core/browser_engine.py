@@ -165,8 +165,12 @@ class PlaywrightInvestigationEngine:
                 if await login_btn.is_visible():
                     self._log(log_callback, investigation_id, "Found 'Log in' button. Clicking to open login modal...", "INFO")
                     await login_btn.click()
-                    await asyncio.sleep(1.5)
+                    await asyncio.sleep(2.0)
             except Exception: pass
+
+            # Refresh DOM state because clicking login might have spawned a modal or SPA route
+            page_html = await self.page.content()
+            page_url = self.page.url
 
             if await self.check_login_required(self.page, page_html, page_url):
                 login_encountered = True
@@ -184,17 +188,24 @@ class PlaywrightInvestigationEngine:
                             tab = self.page.locator("text=/E-mail|Email/i").first
                             if await tab.is_visible(): await tab.click(); await asyncio.sleep(0.5)
 
-                        user_input = self.page.locator("input[type='tel'], input[type='email'], input[placeholder*='number' i], input[placeholder*='User' i], input[placeholder*='Phone' i], input[name*='user' i], input[name*='phone' i], input[type='text']").first
-                        if await user_input.is_visible():
-                            await user_input.click()
-                            await user_input.press_sequentially(auth_user, delay=50)
-                            await asyncio.sleep(0.5)
+                        user_inputs = self.page.locator("input[type='tel'], input[type='email'], input[placeholder*='number' i], input[placeholder*='User' i], input[placeholder*='Phone' i], input[name*='user' i], input[name*='phone' i], input[type='text']")
+                        for i in range(await user_inputs.count()):
+                            target = user_inputs.nth(i)
+                            if await target.is_visible():
+                                await target.click()
+                                await target.press_sequentially(auth_user, delay=50)
+                                await asyncio.sleep(0.5)
+                                break
                         
-                        pass_input = self.page.locator("input[type='password'], input[name='password'], input[placeholder*='Password' i]").first
-                        if await pass_input.is_visible():
-                            await pass_input.click()
-                            await pass_input.press_sequentially(auth_pass, delay=50)
-                            await asyncio.sleep(0.5)
+                        pass_inputs = self.page.locator("input[type='password'], input[name='password'], input[placeholder*='Password' i]")
+                        for i in range(await pass_inputs.count()):
+                            target = pass_inputs.nth(i)
+                            if await target.is_visible():
+                                await target.click()
+                                await target.press_sequentially(auth_pass, delay=50)
+                                await asyncio.sleep(0.5)
+                                break
+                                
                         submit_btn = self.page.locator("button:has-text('Log in'), button:has-text('LOGIN'), button:has-text('Sign in'), button[type='submit'], input[type='submit']").first
                         if await submit_btn.is_visible(): await submit_btn.click(); await asyncio.sleep(3.0)
 
