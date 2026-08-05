@@ -193,29 +193,55 @@ class PlaywrightInvestigationEngine:
                 if auth_user and auth_pass:
                     self._log(log_callback, investigation_id, f"🔑 Credentials provided for '{auth_user}'! Executing automated login...", "INFO")
                     try:
-                        await asyncio.sleep(1.5) # Allow login form DOM to settle
+                        await asyncio.sleep(2.0) # Allow login modal DOM to settle
                         
-                        # Sub-tab switching if mobile/email tabs exist
-                        if auth_mode == "Phone / Mobile Number" or (auth_user.replace("+", "").isdigit() and len(auth_user) >= 10):
-                            tab = self.page.locator("text=/Phone number|Mobile No|Mobile|Phone/i").first
-                            await self.highlight_and_click(tab, delay_after=0.5)
-                        elif auth_mode == "User ID / Username" or ("@" not in auth_user and not auth_user.isdigit()):
-                            tab = self.page.locator("text=/User ID|Account number|Username/i").first
-                            await self.highlight_and_click(tab, delay_after=0.5)
-                        elif auth_mode == "Email" or "@" in auth_user:
-                            tab = self.page.locator("text=/E-mail|Email/i").first
-                            await self.highlight_and_click(tab, delay_after=0.5)
+                        clean_digits = "".join(filter(str.isdigit, auth_user))
+                        is_email = "@" in auth_user or auth_mode == "Email"
+                        is_phone = (auth_mode == "Phone / Mobile Number") or (len(clean_digits) >= 10 and not is_email)
+                        is_user_id = (auth_mode == "User ID / Username") or (not is_email and not is_phone)
+
+                        # Sub-tab switching if mobile/email/username tabs exist
+                        if is_phone:
+                            self._log(log_callback, investigation_id, "Selecting 'Phone number' sub-tab...", "INFO")
+                            try:
+                                phone_tab = self.page.locator("text=/^Phone number$/i, span:has-text('Phone number'), div:has-text('Phone number'):not(:has(*))").first
+                                if await phone_tab.is_visible():
+                                    await self.highlight_and_click(phone_tab, delay_after=1.0)
+                            except Exception:
+                                pass
+                        elif is_user_id:
+                            self._log(log_callback, investigation_id, "Selecting 'Account number / Username' sub-tab...", "INFO")
+                            try:
+                                user_tab = self.page.locator("text=/Account number|User ID|Username/i").first
+                                if await user_tab.is_visible():
+                                    await self.highlight_and_click(user_tab, delay_after=1.0)
+                            except Exception:
+                                pass
+                        elif is_email:
+                            self._log(log_callback, investigation_id, "Selecting 'E-mail' sub-tab...", "INFO")
+                            try:
+                                email_tab = self.page.locator("text=/E-mail|Email/i").first
+                                if await email_tab.is_visible():
+                                    await self.highlight_and_click(email_tab, delay_after=1.0)
+                            except Exception:
+                                pass
+
+                        await asyncio.sleep(1.0)
+
+                        # Format value to fill (10-digit mobile number if phone, else raw string)
+                        fill_val = clean_digits[-10:] if (is_phone and len(clean_digits) >= 10) else auth_user.strip()
 
                         # Fill Username / Mobile input
-                        user_inputs = self.page.locator("input[type='tel'], input[type='email'], input[placeholder*='number' i], input[placeholder*='User' i], input[placeholder*='Phone' i], input[placeholder*='Mobile' i], input[name*='user' i], input[name*='phone' i], input[name*='login' i], input[type='text']")
+                        user_inputs = self.page.locator("input[type='tel'], input[placeholder*='XXXX' i], input[placeholder*='number' i], input[placeholder*='Phone' i], input[placeholder*='Mobile' i], input[name*='phone' i], input[name*='user' i], input[name*='login' i], input[type='text']")
                         user_filled = False
                         for i in range(await user_inputs.count()):
                             target = user_inputs.nth(i)
                             if await target.is_visible():
+                                self._log(log_callback, investigation_id, f"Filling username/phone input with '{fill_val}'...", "INFO")
                                 await target.evaluate("el => el.style.outline = '4px solid #00FF66'")
                                 await target.click()
                                 await target.fill("")
-                                await target.press_sequentially(auth_user, delay=50)
+                                await target.press_sequentially(fill_val, delay=50)
                                 await asyncio.sleep(0.5)
                                 user_filled = True
                                 break
@@ -226,6 +252,7 @@ class PlaywrightInvestigationEngine:
                         for i in range(await pass_inputs.count()):
                             target = pass_inputs.nth(i)
                             if await target.is_visible():
+                                self._log(log_callback, investigation_id, "Filling password input...", "INFO")
                                 await target.evaluate("el => el.style.outline = '4px solid #00FF66'")
                                 await target.click()
                                 await target.fill("")
@@ -237,7 +264,7 @@ class PlaywrightInvestigationEngine:
                         if user_filled and pass_filled:
                             submit_btn = self.page.locator("button:has-text('Log in'), button:has-text('LOGIN'), button:has-text('Sign in'), button[type='submit'], input[type='submit']").first
                             self._log(log_callback, investigation_id, "Submitting login form...", "INFO")
-                            await self.highlight_and_click(submit_btn, delay_after=3.5)
+                            await self.highlight_and_click(submit_btn, delay_after=4.0)
 
                             if not await self.check_login_required(self.page, await self.page.content(), self.page.url):
                                 self._log(log_callback, investigation_id, f"✅ Automated login successful for '{auth_user}'!", "INFO")
