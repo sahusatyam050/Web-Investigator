@@ -102,7 +102,7 @@ class PlaywrightInvestigationEngine:
         investigation_id: str,
         log_callback: Optional[Callable[[str, str], None]] = None,
         auth_callback: Optional[Callable[[], None]] = None,
-        progress_callback: Optional[Callable[[str]], None]] = None,
+        progress_callback: Optional[Callable[[str], None]] = None,
         auth_user: str = "",
         auth_pass: str = "",
         auth_mode: str = "Auto-Detect"
