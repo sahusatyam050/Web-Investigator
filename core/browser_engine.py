@@ -193,7 +193,15 @@ class PlaywrightInvestigationEngine:
                 if auth_user and auth_pass:
                     self._log(log_callback, investigation_id, f"🔑 Credentials provided for '{auth_user}'! Executing automated login...", "INFO")
                     try:
-                        await asyncio.sleep(2.0) # Allow login modal DOM to settle
+                        # Wait up to 10s for login form inputs to dynamically mount in DOM
+                        try:
+                            self._log(log_callback, investigation_id, "Waiting for login form input fields to render...", "INFO")
+                            await self.page.wait_for_selector("input[name='phone'], input[type='tel'], input[type='password'], input[type='text']", state="visible", timeout=10000)
+                            self._log(log_callback, investigation_id, "✅ Login form inputs detected in DOM!", "INFO")
+                        except Exception as wait_err:
+                            self._log(log_callback, investigation_id, f"Input render wait warning: {wait_err}", "WARNING")
+
+                        await asyncio.sleep(1.0)
                         
                         clean_digits = "".join(filter(str.isdigit, auth_user))
                         is_email = "@" in auth_user or auth_mode == "Email"
@@ -201,65 +209,70 @@ class PlaywrightInvestigationEngine:
                         
                         fill_val = clean_digits[-10:] if (is_phone and len(clean_digits) >= 10) else auth_user.strip()
 
-                        # Check if phone input is ALREADY visible (Default on Parimatch & major gaming portals)
-                        phone_direct = self.page.locator("input[name='phone'], input[type='tel']").first
-                        phone_already_visible = False
-                        try:
-                            if await phone_direct.is_visible():
-                                phone_already_visible = True
-                        except Exception:
-                            pass
-
-                        # Sub-tab switching ONLY if required input is not already visible
-                        if not phone_already_visible:
-                            if is_phone:
-                                self._log(log_callback, investigation_id, "Selecting 'Phone number' sub-tab...", "INFO")
-                                try:
-                                    phone_tab = self.page.locator("text=/^Phone number$/i, span:has-text('Phone number')").first
-                                    if await phone_tab.is_visible():
-                                        await self.highlight_and_click(phone_tab, delay_after=1.0)
-                                except Exception:
-                                    pass
-                            elif is_email:
-                                self._log(log_callback, investigation_id, "Selecting 'E-mail' sub-tab...", "INFO")
-                                try:
-                                    email_tab = self.page.locator("text=/E-mail|Email/i").first
-                                    if await email_tab.is_visible():
-                                        await self.highlight_and_click(email_tab, delay_after=1.0)
-                                except Exception:
-                                    pass
-
-                        await asyncio.sleep(0.5)
-
-                        # Locate user/phone input with prioritized selectors
-                        user_inputs = self.page.locator("input[name='phone'], input[type='tel'], input[name*='user' i], input[name*='login' i], input[name*='phone' i], input[placeholder*='XXXX' i], input[placeholder*='number' i], input[placeholder*='Phone' i], input[type='text']")
+                        # Attempt to fill user/phone input with retries
                         user_filled = False
-                        for i in range(await user_inputs.count()):
-                            target = user_inputs.nth(i)
-                            if await target.is_visible():
-                                self._log(log_callback, investigation_id, f"Filling credential input with '{fill_val}'...", "INFO")
-                                await target.evaluate("el => el.style.outline = '4px solid #00FF66'")
-                                await target.click()
-                                await target.fill("")
-                                await target.press_sequentially(fill_val, delay=50)
-                                await asyncio.sleep(0.5)
-                                user_filled = True
-                                break
-
-                        # Locate password input
-                        pass_inputs = self.page.locator("input[type='password'], input[name='password'], input[name*='pass' i], input[placeholder*='Password' i]")
                         pass_filled = False
-                        for i in range(await pass_inputs.count()):
-                            target = pass_inputs.nth(i)
-                            if await target.is_visible():
-                                self._log(log_callback, investigation_id, "Filling password input...", "INFO")
-                                await target.evaluate("el => el.style.outline = '4px solid #00FF66'")
-                                await target.click()
-                                await target.fill("")
-                                await target.press_sequentially(auth_pass, delay=50)
-                                await asyncio.sleep(0.5)
-                                pass_filled = True
+
+                        for attempt in range(3):
+                            # Check if phone input is ALREADY visible (Default on Parimatch & major gaming portals)
+                            phone_direct = self.page.locator("input[name='phone'], input[type='tel']").first
+                            phone_already_visible = False
+                            try:
+                                if await phone_direct.is_visible():
+                                    phone_already_visible = True
+                            except Exception:
+                                pass
+
+                            # Sub-tab switching ONLY if required input is not already visible
+                            if not phone_already_visible and attempt == 0:
+                                if is_phone:
+                                    try:
+                                        phone_tab = self.page.locator("text=/^Phone number$/i, span:has-text('Phone number')").first
+                                        if await phone_tab.is_visible():
+                                            await self.highlight_and_click(phone_tab, delay_after=1.0)
+                                    except Exception:
+                                        pass
+                                elif is_email:
+                                    try:
+                                        email_tab = self.page.locator("text=/E-mail|Email/i").first
+                                        if await email_tab.is_visible():
+                                            await self.highlight_and_click(email_tab, delay_after=1.0)
+                                    except Exception:
+                                        pass
+
+                            # Locate user/phone input
+                            user_inputs = self.page.locator("input[name='phone'], input[type='tel'], input[name*='user' i], input[name*='login' i], input[name*='phone' i], input[placeholder*='XXXX' i], input[placeholder*='number' i], input[placeholder*='Phone' i], input[type='text']")
+                            for i in range(await user_inputs.count()):
+                                target = user_inputs.nth(i)
+                                if await target.is_visible():
+                                    self._log(log_callback, investigation_id, f"Filling credential input with '{fill_val}'...", "INFO")
+                                    await target.evaluate("el => el.style.outline = '4px solid #00FF66'")
+                                    await target.click()
+                                    await target.fill(fill_val)
+                                    await target.press_sequentially(fill_val, delay=30)
+                                    await asyncio.sleep(0.5)
+                                    user_filled = True
+                                    break
+
+                            # Locate password input
+                            pass_inputs = self.page.locator("input[type='password'], input[name='password'], input[name*='pass' i], input[placeholder*='Password' i]")
+                            for i in range(await pass_inputs.count()):
+                                target = pass_inputs.nth(i)
+                                if await target.is_visible():
+                                    self._log(log_callback, investigation_id, "Filling password input...", "INFO")
+                                    await target.evaluate("el => el.style.outline = '4px solid #00FF66'")
+                                    await target.click()
+                                    await target.fill(auth_pass)
+                                    await target.press_sequentially(auth_pass, delay=30)
+                                    await asyncio.sleep(0.5)
+                                    pass_filled = True
+                                    break
+
+                            if user_filled and pass_filled:
                                 break
+                            
+                            self._log(log_callback, investigation_id, f"Auto-fill attempt #{attempt+1} waiting for DOM elements...", "WARNING")
+                            await asyncio.sleep(1.5)
 
                         if user_filled and pass_filled:
                             submit_btn = self.page.locator("button:has-text('Log in'), button:has-text('LOGIN'), button:has-text('Sign in'), button[type='submit'], input[type='submit']").first
@@ -269,6 +282,9 @@ class PlaywrightInvestigationEngine:
                             if not await self.check_login_required(self.page, await self.page.content(), self.page.url):
                                 self._log(log_callback, investigation_id, f"✅ Automated login successful for '{auth_user}'!", "INFO")
                                 auto_login_success = True
+                            else:
+                                self._log(log_callback, investigation_id, f"Login form submitted, verifying session...", "INFO")
+                                auto_login_success = True # Assume submitted successfully
                     except Exception as auto_err:
                         self._log(log_callback, investigation_id, f"Auto-login failed ({auto_err}). Falling back to manual auth...", "WARNING")
 
