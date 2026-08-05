@@ -101,7 +101,11 @@ class PlaywrightInvestigationEngine:
         target_url: str, 
         investigation_id: str,
         log_callback: Optional[Callable[[str, str], None]] = None,
-        auth_callback: Optional[Callable[[], None]] = None
+        auth_callback: Optional[Callable[[], None]] = None,
+        progress_callback: Optional[Callable[[str]], None]] = None,
+        auth_user: str = "",
+        auth_pass: str = "",
+        auth_mode: str = "Auto-Detect"
     ) -> Dict[str, Any]:
         """
         Executes the full automated evidence collection workflow (Steps 3-11).
@@ -115,16 +119,106 @@ class PlaywrightInvestigationEngine:
         self._log(log_callback, investigation_id, f"Started investigation for {target_url}", "INFO")
 
         deposit_inspected = False
-        login_encountered = False
+        login_completed = False
 
         try:
             await self.init_browser()
             
-            # Step 3: Launch Playwright & Open Homepage
+            # Step 3: Launch Playwright & Open Homepage (LoadRoot Phase)
             self._log(log_callback, investigation_id, "Opening Homepage...", "INFO")
-            await self.page.goto(target_url, wait_until="domcontentloaded", timeout=DEFAULT_RENDER_TIMEOUT)
+            try:
+                await self.page.goto(target_url, wait_until="domcontentloaded", timeout=DEFAULT_RENDER_TIMEOUT)
+            except Exception as goto_err:
+                self._log(log_callback, investigation_id, f"Initial page load warning ({goto_err}). Proceeding with current DOM...", "WARNING")
             await asyncio.sleep(2) # Wait for dynamic rendering
 
+            homepage_url = self.page.url
+            homepage_html = await self.page.content()
+
+            # --- ROOT-LEVEL AUTHENTICATION CHECK ---
+            try:
+                login_btn = self.page.locator("button:has-text('Log in'), a:has-text('Log in'), button:has-text('Sign in'), a:has-text('Sign in')").first
+                if await login_btn.is_visible():
+                    self._log(log_callback, investigation_id, "Found visible 'Log in' button on homepage. Clicking to open login modal...", "INFO")
+                    await login_btn.click()
+                    await asyncio.sleep(2.0)
+            except Exception:
+                pass
+
+            page_html = await self.page.content()
+            page_url = self.page.url
+
+            if await self.check_login_required(self.page, page_html, page_url):
+                self._log(log_callback, investigation_id, "🔑 Login Required detected on homepage!", "WARNING")
+                auto_login_success = False
+                
+                if auth_user and auth_pass:
+                    self._log(log_callback, investigation_id, f"🔑 Credentials provided for '{auth_user}'! Executing automated login...", "INFO")
+                    try:
+                        # Sub-tab switching
+                        if auth_mode == "Phone / Mobile Number" or (auth_user.replace("+", "").isdigit() and len(auth_user) >= 10):
+                            tab = self.page.locator("text=/Phone number|Mobile No|Mobile/i").first
+                            if await tab.is_visible(): await tab.click(); await asyncio.sleep(0.5)
+                        elif auth_mode == "User ID / Username" or ("@" not in auth_user and not auth_user.isdigit()):
+                            tab = self.page.locator("text=/User ID|Account number|Username/i").first
+                            if await tab.is_visible(): await tab.click(); await asyncio.sleep(0.5)
+                        elif auth_mode == "Email" or "@" in auth_user:
+                            tab = self.page.locator("text=/E-mail|Email/i").first
+                            if await tab.is_visible(): await tab.click(); await asyncio.sleep(0.5)
+
+                        # Fill Username / Mobile input
+                        user_inputs = self.page.locator("input[type='tel'], input[type='email'], input[placeholder*='number' i], input[placeholder*='User' i], input[placeholder*='Phone' i], input[name*='user' i], input[name*='phone' i], input[type='text']")
+                        for i in range(await user_inputs.count()):
+                            target = user_inputs.nth(i)
+                            if await target.is_visible():
+                                await target.click()
+                                await target.press_sequentially(auth_user, delay=50)
+                                await asyncio.sleep(0.5)
+                                break
+
+                        # Fill Password input
+                        pass_inputs = self.page.locator("input[type='password'], input[name='password'], input[placeholder*='Password' i]")
+                        for i in range(await pass_inputs.count()):
+                            target = pass_inputs.nth(i)
+                            if await target.is_visible():
+                                await target.click()
+                                await target.press_sequentially(auth_pass, delay=50)
+                                await asyncio.sleep(0.5)
+                                break
+
+                        # Click Submit button
+                        submit_btn = self.page.locator("button:has-text('Log in'), button:has-text('LOGIN'), button:has-text('Sign in'), button[type='submit'], input[type='submit']").first
+                        if await submit_btn.is_visible(): await submit_btn.click(); await asyncio.sleep(3.0)
+
+                        if not await self.check_login_required(self.page, await self.page.content(), self.page.url):
+                            self._log(log_callback, investigation_id, f"✅ Automated login successful for '{auth_user}'!", "INFO")
+                            auto_login_success = True
+                    except Exception as auto_err:
+                        self._log(log_callback, investigation_id, f"Auto-login failed ({auto_err}). Falling back to manual auth...", "WARNING")
+
+                if not auto_login_success:
+                    self._log(log_callback, investigation_id, f"🔑 Manual Login Required! Please log in in the browser window on screen...", "WARNING")
+                    try: await self.page.bring_to_front()
+                    except Exception: pass
+
+                    self.pause_for_auth = True
+                    if auth_callback: auth_callback()
+                    self.auth_resumed.clear()
+
+                    while self.pause_for_auth and not self.stop_requested:
+                        if self.auth_resumed.is_set(): self.pause_for_auth = False; break
+                        await asyncio.sleep(1)
+                        try:
+                            if not await self.check_login_required(self.page, await self.page.content(), self.page.url):
+                                self._log(log_callback, investigation_id, f"✅ Manual login detected! Auto-resuming crawl...", "INFO")
+                                self.pause_for_auth = False; break
+                        except Exception: pass
+
+            login_completed = True
+            self._log(log_callback, investigation_id, "🔐 Login phase complete. Login checks disabled for rest of crawl.", "INFO")
+            await asyncio.sleep(2.0)
+
+            # Refresh homepage state after login
             homepage_url = self.page.url
             homepage_html = await self.page.content()
 
@@ -149,73 +243,21 @@ class PlaywrightInvestigationEngine:
                 visited_urls.add(page_url)
                 pages_visited_count += 1
 
-                self._log(log_callback, investigation_id, f"[{pages_visited_count}/{self.max_pages}] Investigating ({priority}): {page_url}", "INFO")
+                self._log(log_callback, investigation_id, f"[{pages_visited_count}/{self.max_pages}] Deep Crawl ({priority}): {page_url}", "INFO")
 
                 try:
                     if page_url != self.page.url:
-                        await self.page.goto(page_url, wait_until="domcontentloaded", timeout=DEFAULT_RENDER_TIMEOUT)
-                        await asyncio.sleep(1.5)
-
-                    # Auto-trigger Login Modal ONCE if login button is visible and auth not done
-                    if not login_encountered:
                         try:
-                            login_btn = self.page.locator("button:has-text('Log in'), a:has-text('Log in'), button:has-text('Sign in'), a:has-text('Sign in')").first
-                            if await login_btn.is_visible():
-                                self._log(log_callback, investigation_id, "Found visible 'Log in' button. Clicking to open login modal...", "INFO")
-                                await login_btn.click()
-                                await asyncio.sleep(1.5)
-                        except Exception:
-                            pass
+                            await self.page.goto(page_url, wait_until="domcontentloaded", timeout=DEFAULT_RENDER_TIMEOUT)
+                        except Exception as p_err:
+                            self._log(log_callback, investigation_id, f"Navigation timeout on {page_url}, proceeding with available DOM...", "WARNING")
+                        await asyncio.sleep(1.5)
 
                     page_title = await self.page.title() or page_url
                     page_html = await self.page.content()
 
-                    # Step 6: Per-Page Auth / Login Modal Detection & Manual Auth Pause
-                    if await self.check_login_required(self.page, page_html, page_url):
-                        login_encountered = True
-                        self._log(log_callback, investigation_id, f"🔑 Login Required / Auth Form detected on {page_url}! Please log in in the browser window on screen...", "WARNING")
-                        
-                        try:
-                            await self.page.bring_to_front()
-                        except Exception:
-                            pass
-
-                        self.pause_for_auth = True
-                        if auth_callback:
-                            auth_callback()
-                        
-                        self.auth_resumed.clear()
-
-                        # Smart Auto-Resume Polling Loop
-                        while self.pause_for_auth and not self.stop_requested:
-                            if self.auth_resumed.is_set():
-                                self.pause_for_auth = False
-                                break
-                            
-                            await asyncio.sleep(1)
-                            
-                            try:
-                                current_url = self.page.url
-                                current_html = await self.page.content()
-                                if not await self.check_login_required(self.page, current_html, current_url):
-                                    self._log(log_callback, investigation_id, f"✅ Manual login detected in browser ({current_url})! Auto-resuming crawl...", "INFO")
-                                    self.pause_for_auth = False
-                                    break
-                            except Exception:
-                                pass
-
-                        if self.stop_requested:
-                            self._log(log_callback, investigation_id, "Investigation stopped during authentication pause.", "WARNING")
-                            break
-
-                        # Refresh page details after manual login
-                        page_url = self.page.url
-                        page_html = await self.page.content()
-                        page_title = await self.page.title() or page_url
-                        self._log(log_callback, investigation_id, f"Resumed investigation after manual authentication.", "INFO")
-
-                    # Deep Deposit & Payment QR Code Inspection Flow (Runs ONCE after login)
-                    if login_encountered and not deposit_inspected:
+                    # Deep Deposit & Payment QR Code Inspection Flow (Runs ONCE post-login)
+                    if login_completed and not deposit_inspected:
                         try:
                             deposit_selector = "button:has-text('Deposit'), a:has-text('Deposit'), button:has-text('Recharge'), a:has-text('Recharge'), button:has-text('Cashier'), a:has-text('Cashier'), button:has-text('Add Money')"
                             deposit_btn = self.page.locator(deposit_selector).first
@@ -225,7 +267,7 @@ class PlaywrightInvestigationEngine:
                                 await deposit_btn.click()
                                 await asyncio.sleep(2.5)
 
-                                # 1. Locate and click UPI / Paytm / PhonePe method card
+                                # Locate and click UPI / Paytm / PhonePe method card
                                 upi_card_selectors = [
                                     "div:has-text('UPI'):not(:has(*))",
                                     "div:has-text('Pay Tm'):not(:has(*))",
@@ -247,7 +289,7 @@ class PlaywrightInvestigationEngine:
                                     except Exception:
                                         continue
 
-                                # 2. Handle pre-set deposit amount or Continue button if prompted
+                                # Handle amount or Continue button
                                 if payment_clicked:
                                     try:
                                         amount_btn = self.page.locator("button:has-text('500'), button:has-text('1000'), div:has-text('500')").first
@@ -259,7 +301,7 @@ class PlaywrightInvestigationEngine:
                                         if await submit_pay_btn.is_visible():
                                             self._log(log_callback, investigation_id, "Clicking 'Continue/Deposit' to generate active QR code & UPI VPA...", "INFO")
                                             await submit_pay_btn.click()
-                                            await asyncio.sleep(3.0) # Wait for QR code image or payment gateway iframe to render
+                                            await asyncio.sleep(3.0)
                                     except Exception as sub_err:
                                         logger.debug(f"Amount submit error: {sub_err}")
 
@@ -269,7 +311,7 @@ class PlaywrightInvestigationEngine:
                         except Exception as dep_err:
                             logger.debug(f"Deposit flow error: {dep_err}")
 
-                    # Step 4 & 5: Dynamic Queue Expansion (Extract new links on this page)
+                    # Step 4 & 5: Dynamic Queue Expansion (Extract & Prioritize High -> Medium -> Low links)
                     new_discovered = nav_engine.extract_and_prioritize_links(page_html, page_url)
                     for link in new_discovered:
                         if link["url"] not in visited_urls and link["url"] not in [q["url"] for q in queue]:
