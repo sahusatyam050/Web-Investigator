@@ -97,7 +97,7 @@ class PlaywrightInvestigationEngine:
         return False
 
     async def highlight_and_click(self, locator, delay_after: float = 1.5):
-        """Highlights a DOM element with a glowing red highlight before clicking it."""
+        """Highlights a DOM element with a glowing red highlight before clicking it (with forced overlay fallback)."""
         try:
             if await locator.is_visible():
                 await locator.evaluate("""el => {
@@ -106,11 +106,15 @@ class PlaywrightInvestigationEngine:
                     el.style.transition = 'all 0.2s ease-in-out';
                 }""")
                 await asyncio.sleep(0.4)
-                await locator.click()
+                try:
+                    await locator.click(timeout=3000)
+                except Exception:
+                    # Fallback to forced click if modal overlay intercepts pointer events
+                    await locator.click(force=True, timeout=3000)
                 await asyncio.sleep(delay_after)
                 return True
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Click warning ({e})")
         return False
 
     async def scroll_page(self, max_scroll_px: int = 2500):
@@ -278,6 +282,16 @@ class PlaywrightInvestigationEngine:
                                     break
 
                             if user_filled and pass_filled:
+                                # Auto-check any login consent checkboxes (e.g. age agreement on Fun88)
+                                try:
+                                    chkboxes = self.page.locator("input[type='checkbox']")
+                                    for c_idx in range(await chkboxes.count()):
+                                        chk = chkboxes.nth(c_idx)
+                                        if await chk.is_visible() and not await chk.is_checked():
+                                            await chk.check()
+                                            self._log(log_callback, investigation_id, "Checked login consent checkbox.", "INFO")
+                                except Exception:
+                                    pass
                                 break
                             
                             self._log(log_callback, investigation_id, f"Auto-fill attempt #{attempt+1} waiting for DOM elements...", "WARNING")
@@ -287,6 +301,16 @@ class PlaywrightInvestigationEngine:
                             submit_btn = self.page.locator("button:has-text('Log in'), button:has-text('LOGIN'), button:has-text('Sign in'), button[type='submit'], input[type='submit']").first
                             self._log(log_callback, investigation_id, "Submitting login form...", "INFO")
                             await self.highlight_and_click(submit_btn, delay_after=4.0)
+
+                            # Detect on-screen authentication error/status messages (e.g. Invalid User ID, wrong password)
+                            try:
+                                error_msg_locator = self.page.locator("text=/invalid|incorrect|wrong password|does not exist|failed|error/i").first
+                                if await error_msg_locator.is_visible():
+                                    err_txt = await error_msg_locator.text_content()
+                                    clean_err = err_txt.strip() if err_txt else "Unknown Authentication Error"
+                                    self._log(log_callback, investigation_id, f"⚠️ Website Auth Alert: '{clean_err}'", "WARNING")
+                            except Exception:
+                                pass
 
                             if not await self.check_login_required(self.page, await self.page.content(), self.page.url):
                                 self._log(log_callback, investigation_id, f"✅ Automated login successful for '{auth_user}'!", "INFO")
