@@ -248,7 +248,7 @@ class PlaywrightInvestigationEngine:
                                     self._log(log_callback, investigation_id, f"Filling credential input with '{fill_val}'...", "INFO")
                                     await target.evaluate("el => el.style.outline = '4px solid #00FF66'")
                                     await target.click()
-                                    await target.fill(fill_val)
+                                    await target.fill("") # Clear input first to prevent double-typing
                                     await target.press_sequentially(fill_val, delay=30)
                                     await asyncio.sleep(0.5)
                                     user_filled = True
@@ -262,7 +262,7 @@ class PlaywrightInvestigationEngine:
                                     self._log(log_callback, investigation_id, "Filling password input...", "INFO")
                                     await target.evaluate("el => el.style.outline = '4px solid #00FF66'")
                                     await target.click()
-                                    await target.fill(auth_pass)
+                                    await target.fill("") # Clear input first to prevent double-typing
                                     await target.press_sequentially(auth_pass, delay=30)
                                     await asyncio.sleep(0.5)
                                     pass_filled = True
