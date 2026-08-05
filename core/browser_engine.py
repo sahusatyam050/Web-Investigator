@@ -346,8 +346,15 @@ class PlaywrightInvestigationEngine:
             # Prevent crawler from ever visiting login/auth pages during deep crawl
             login_terms = ["/login", "/signin", "/auth", "/register", "/signup"]
 
-            # Refresh homepage state after login
-            homepage_url = self.page.url
+            # Navigate back to root target_url to ensure we start crawl from homepage, not a login callback URL
+            try:
+                self._log(log_callback, investigation_id, f"Navigating back to root URL ({target_url}) to start deep crawl...", "INFO")
+                await self.page.goto(target_url, wait_until="domcontentloaded", timeout=DEFAULT_RENDER_TIMEOUT)
+                await asyncio.sleep(2.5)
+            except Exception as nav_err:
+                pass
+
+            homepage_url = target_url
             homepage_html = await self.page.content()
 
             # Add homepage as initial target
