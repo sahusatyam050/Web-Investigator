@@ -298,9 +298,18 @@ class PlaywrightInvestigationEngine:
                             await asyncio.sleep(1.5)
 
                         if user_filled and pass_filled:
-                            submit_btn = self.page.locator("button:has-text('Log in'), button:has-text('LOGIN'), button:has-text('Sign in'), button[type='submit'], input[type='submit']").first
                             self._log(log_callback, investigation_id, "Submitting login form...", "INFO")
-                            await self.highlight_and_click(submit_btn, delay_after=4.0)
+                            submit_locs = self.page.locator("button:has-text('Log in'), button:has-text('LOGIN'), button:has-text('Sign in'), button[type='submit'], input[type='submit']")
+                            submit_clicked = False
+                            for s_idx in range(await submit_locs.count()):
+                                btn = submit_locs.nth(s_idx)
+                                if await btn.is_visible():
+                                    submit_clicked = await self.highlight_and_click(btn, delay_after=4.0)
+                                    if submit_clicked:
+                                        break
+                            
+                            if not submit_clicked:
+                                raise Exception("No visible login submit button found to click.")
 
                             # Detect on-screen authentication error/status messages (e.g. Invalid User ID, wrong password)
                             try:
