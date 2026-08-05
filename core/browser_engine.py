@@ -316,8 +316,14 @@ class PlaywrightInvestigationEngine:
                         except Exception: pass
 
             login_completed = True
-            self._log(log_callback, investigation_id, "🔐 Login phase complete. Login checks disabled for rest of crawl.", "INFO")
+            self._log(log_callback, investigation_id, "🔐 Login phase complete. Login checks & login page visits disabled for rest of crawl.", "INFO")
             await asyncio.sleep(2.0)
+
+            # Prevent crawler from ever visiting login/auth pages during deep crawl
+            login_terms = ["/login", "/signin", "/auth", "/register", "/signup"]
+            visited_urls.add("https://parimatchs123.com/en/login")
+            visited_urls.add("https://parimatchs123.com/login")
+            visited_urls.add(self.page.url)
 
             # Refresh homepage state after login
             homepage_url = self.page.url
@@ -338,7 +344,8 @@ class PlaywrightInvestigationEngine:
                 page_url = target["url"]
                 priority = target["priority"]
 
-                if page_url in visited_urls:
+                # Skip visited URLs or login/auth pages post-login
+                if page_url in visited_urls or (login_completed and any(term in page_url.lower() for term in login_terms)):
                     continue
 
                 visited_urls.add(page_url)
@@ -414,6 +421,9 @@ class PlaywrightInvestigationEngine:
                     # Step 4 & 5: Dynamic Queue Expansion (Extract & Prioritize High -> Medium -> Low links)
                     new_discovered = nav_engine.extract_and_prioritize_links(page_html, page_url)
                     for link in new_discovered:
+                        u_lower = link["url"].lower()
+                        if login_completed and any(term in u_lower for term in login_terms):
+                            continue
                         if link["url"] not in visited_urls and link["url"] not in [q["url"] for q in queue]:
                             queue.append(link)
 
