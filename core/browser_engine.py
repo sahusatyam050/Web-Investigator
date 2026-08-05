@@ -198,46 +198,46 @@ class PlaywrightInvestigationEngine:
                         clean_digits = "".join(filter(str.isdigit, auth_user))
                         is_email = "@" in auth_user or auth_mode == "Email"
                         is_phone = (auth_mode == "Phone / Mobile Number") or (len(clean_digits) >= 10 and not is_email)
-                        is_user_id = (auth_mode == "User ID / Username") or (not is_email and not is_phone)
-
-                        # Sub-tab switching if mobile/email/username tabs exist
-                        if is_phone:
-                            self._log(log_callback, investigation_id, "Selecting 'Phone number' sub-tab...", "INFO")
-                            try:
-                                phone_tab = self.page.locator("text=/^Phone number$/i, span:has-text('Phone number'), div:has-text('Phone number'):not(:has(*))").first
-                                if await phone_tab.is_visible():
-                                    await self.highlight_and_click(phone_tab, delay_after=1.0)
-                            except Exception:
-                                pass
-                        elif is_user_id:
-                            self._log(log_callback, investigation_id, "Selecting 'Account number / Username' sub-tab...", "INFO")
-                            try:
-                                user_tab = self.page.locator("text=/Account number|User ID|Username/i").first
-                                if await user_tab.is_visible():
-                                    await self.highlight_and_click(user_tab, delay_after=1.0)
-                            except Exception:
-                                pass
-                        elif is_email:
-                            self._log(log_callback, investigation_id, "Selecting 'E-mail' sub-tab...", "INFO")
-                            try:
-                                email_tab = self.page.locator("text=/E-mail|Email/i").first
-                                if await email_tab.is_visible():
-                                    await self.highlight_and_click(email_tab, delay_after=1.0)
-                            except Exception:
-                                pass
-
-                        await asyncio.sleep(1.0)
-
-                        # Format value to fill (10-digit mobile number if phone, else raw string)
+                        
                         fill_val = clean_digits[-10:] if (is_phone and len(clean_digits) >= 10) else auth_user.strip()
 
-                        # Fill Username / Mobile input
-                        user_inputs = self.page.locator("input[type='tel'], input[placeholder*='XXXX' i], input[placeholder*='number' i], input[placeholder*='Phone' i], input[placeholder*='Mobile' i], input[name*='phone' i], input[name*='user' i], input[name*='login' i], input[type='text']")
+                        # Check if phone input is ALREADY visible (Default on Parimatch & major gaming portals)
+                        phone_direct = self.page.locator("input[name='phone'], input[type='tel']").first
+                        phone_already_visible = False
+                        try:
+                            if await phone_direct.is_visible():
+                                phone_already_visible = True
+                        except Exception:
+                            pass
+
+                        # Sub-tab switching ONLY if required input is not already visible
+                        if not phone_already_visible:
+                            if is_phone:
+                                self._log(log_callback, investigation_id, "Selecting 'Phone number' sub-tab...", "INFO")
+                                try:
+                                    phone_tab = self.page.locator("text=/^Phone number$/i, span:has-text('Phone number')").first
+                                    if await phone_tab.is_visible():
+                                        await self.highlight_and_click(phone_tab, delay_after=1.0)
+                                except Exception:
+                                    pass
+                            elif is_email:
+                                self._log(log_callback, investigation_id, "Selecting 'E-mail' sub-tab...", "INFO")
+                                try:
+                                    email_tab = self.page.locator("text=/E-mail|Email/i").first
+                                    if await email_tab.is_visible():
+                                        await self.highlight_and_click(email_tab, delay_after=1.0)
+                                except Exception:
+                                    pass
+
+                        await asyncio.sleep(0.5)
+
+                        # Locate user/phone input with prioritized selectors
+                        user_inputs = self.page.locator("input[name='phone'], input[type='tel'], input[name*='user' i], input[name*='login' i], input[name*='phone' i], input[placeholder*='XXXX' i], input[placeholder*='number' i], input[placeholder*='Phone' i], input[type='text']")
                         user_filled = False
                         for i in range(await user_inputs.count()):
                             target = user_inputs.nth(i)
                             if await target.is_visible():
-                                self._log(log_callback, investigation_id, f"Filling username/phone input with '{fill_val}'...", "INFO")
+                                self._log(log_callback, investigation_id, f"Filling credential input with '{fill_val}'...", "INFO")
                                 await target.evaluate("el => el.style.outline = '4px solid #00FF66'")
                                 await target.click()
                                 await target.fill("")
@@ -246,8 +246,8 @@ class PlaywrightInvestigationEngine:
                                 user_filled = True
                                 break
 
-                        # Fill Password input
-                        pass_inputs = self.page.locator("input[type='password'], input[name*='pass' i], input[placeholder*='Password' i]")
+                        # Locate password input
+                        pass_inputs = self.page.locator("input[type='password'], input[name='password'], input[name*='pass' i], input[placeholder*='Password' i]")
                         pass_filled = False
                         for i in range(await pass_inputs.count()):
                             target = pass_inputs.nth(i)
