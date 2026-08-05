@@ -313,7 +313,7 @@ class PlaywrightInvestigationEngine:
 
                             # Detect on-screen authentication error/status messages (e.g. Invalid User ID, wrong password)
                             try:
-                                error_msg_locator = self.page.locator("text=/invalid|incorrect|wrong password|does not exist|failed|error/i").first
+                                error_msg_locator = self.page.locator("text=/invalid|incorrect|wrong|does not exist|failed|error/i").first
                                 if await error_msg_locator.is_visible():
                                     err_txt = await error_msg_locator.text_content()
                                     clean_err = err_txt.strip() if err_txt else "Unknown Authentication Error"
@@ -325,8 +325,8 @@ class PlaywrightInvestigationEngine:
                                 self._log(log_callback, investigation_id, f"✅ Automated login successful for '{auth_user}'!", "INFO")
                                 auto_login_success = True
                             else:
-                                self._log(log_callback, investigation_id, f"Login form submitted, verifying session...", "INFO")
-                                auto_login_success = True # Assume submitted successfully
+                                self._log(log_callback, investigation_id, f"❌ Automated login failed! Login form is still present.", "WARNING")
+                                auto_login_success = False
                     except Exception as auto_err:
                         self._log(log_callback, investigation_id, f"Auto-login failed ({auto_err}). Falling back to manual auth...", "WARNING")
 
