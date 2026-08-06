@@ -206,9 +206,9 @@ class PlaywrightInvestigationEngine:
                         except Exception:
                             pass
 
-            # Refresh DOM state because clicking login might have spawned a modal or SPA route
-            page_html = await self.page.content()
-            page_url = self.page.url
+                    # Refresh DOM state because clicking login might have spawned a modal or SPA route
+                    page_html = await self.page.content()
+                    page_url = self.page.url
 
                     # Step 6: Per-Page Auth / Login Modal Detection & Manual Auth Pause
                     if await self.check_login_required(self.page, page_html, page_url):
