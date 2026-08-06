@@ -1,3 +1,4 @@
+import re
 import asyncio
 import time
 import uuid
@@ -76,21 +77,19 @@ class PlaywrightInvestigationEngine:
         url_lower = url.lower()
         if any(term in url_lower for term in ["/login", "/signin", "/auth", "/register"]):
             return True
-            
-        content_lower = html_content.lower()
-        login_text_triggers = [
-            "please login", "login required", "sign in to continue", 
-            "enter password", "forgot your password", "account number",
-            "continue with google", "log in to your account"
-        ]
-        if any(trigger in content_lower for trigger in login_text_triggers):
-            return True
 
         # Check for visible password input fields or login forms in DOM
         try:
-            password_count = await page.locator("input[type='password'], input[name*='pass']").count()
-            if password_count > 0:
-                return True
+            password_inputs = page.locator("input[type='password'], input[name*='pass' i]")
+            for i in range(await password_inputs.count()):
+                if await password_inputs.nth(i).is_visible():
+                    return True
+                    
+            # Check for visible Login buttons (indicates user is not logged in)
+            login_btns = page.locator("button:has-text('Log in'), a:has-text('Log in'), button:has-text('LOGIN'), a:has-text('LOGIN'), button:has-text('Sign in'), a:has-text('Sign in')").filter(has_not_text="Sign up")
+            for i in range(await login_btns.count()):
+                if await login_btns.nth(i).is_visible():
+                    return True
         except Exception:
             pass
 
@@ -180,7 +179,8 @@ class PlaywrightInvestigationEngine:
 
             # --- ROOT-LEVEL AUTHENTICATION CHECK ---
             try:
-                login_btn = self.page.locator("button:has-text('Log in'), a:has-text('Log in'), button:has-text('Sign in'), a:has-text('Sign in'), button:has-text('LOGIN'), a:has-text('LOGIN')").first
+                # Prioritize Log In buttons, strictly avoiding "Sign up"
+                login_btn = self.page.locator("button:has-text('Log in'), a:has-text('Log in'), button:has-text('LOGIN'), a:has-text('LOGIN'), button:has-text('Sign in'), a:has-text('Sign in'), text=/^Log in$/i, text=/^LOGIN$/i, text=/^Sign in$/i").filter(has_not_text="Sign up").first
                 if await login_btn.is_visible():
                     self._log(log_callback, investigation_id, "Found visible 'Log in' button on homepage. Clicking with visual highlight...", "INFO")
                     await self.highlight_and_click(login_btn, delay_after=2.0)
@@ -238,6 +238,14 @@ class PlaywrightInvestigationEngine:
 
                             # Sub-tab switching ONLY if required input is not already visible
                             if not phone_already_visible and attempt == 0:
+                                # If we are accidentally on a "Sign Up" modal, try to click the "Log in" toggle first
+                                try:
+                                    login_toggle = self.page.locator("a:has-text('Log in'), button:has-text('Log in'), div:has-text('Log in')").filter(has_not_text="Sign up").first
+                                    if await login_toggle.is_visible():
+                                        await self.highlight_and_click(login_toggle, delay_after=1.0)
+                                except Exception:
+                                    pass
+
                                 if is_phone:
                                     try:
                                         phone_tab = self.page.locator("text=/^Phone number$/i, span:has-text('Phone number')").first
@@ -254,32 +262,42 @@ class PlaywrightInvestigationEngine:
                                         pass
 
                             # Locate user/phone input
-                            user_inputs = self.page.locator("input[name='phone'], input[type='tel'], input[name*='user' i], input[name*='login' i], input[name*='phone' i], input[placeholder*='XXXX' i], input[placeholder*='number' i], input[placeholder*='Phone' i], input[type='text']")
+                            user_inputs = self.page.locator("input[type='email'], input[name='phone'], input[type='tel'], input[name*='user' i], input[name*='login' i], input[name*='phone' i], input[name*='email' i], input[placeholder*='XXXX' i], input[placeholder*='number' i], input[placeholder*='Phone' i], input[type='text']")
                             for i in range(await user_inputs.count()):
                                 target = user_inputs.nth(i)
                                 if await target.is_visible():
-                                    self._log(log_callback, investigation_id, f"Filling credential input with '{fill_val}'...", "INFO")
-                                    await target.evaluate("el => el.style.outline = '4px solid #00FF66'")
-                                    await target.click()
-                                    await target.fill("") # Clear input first to prevent double-typing
-                                    await target.press_sequentially(fill_val, delay=30)
-                                    await asyncio.sleep(0.5)
-                                    user_filled = True
-                                    break
+                                    try:
+                                        self._log(log_callback, investigation_id, f"Filling credential input with '{fill_val}'...", "INFO")
+                                        await target.evaluate("el => el.style.outline = '4px solid #00FF66'")
+                                        await target.click(force=True, timeout=2000) # Force click to bypass overlays
+                                        await target.fill("") # Clear input first to prevent double-typing
+                                        await asyncio.sleep(0.3) # Human pause before typing
+                                        await target.press_sequentially(fill_val, delay=150) # Slow, human-like typing
+                                        await asyncio.sleep(0.5)
+                                        user_filled = True
+                                        break
+                                    except Exception as e:
+                                        logger.debug(f"Failed to fill user input: {e}")
 
                             # Locate password input
                             pass_inputs = self.page.locator("input[type='password'], input[name='password'], input[name*='pass' i], input[placeholder*='Password' i]")
                             for i in range(await pass_inputs.count()):
                                 target = pass_inputs.nth(i)
                                 if await target.is_visible():
-                                    self._log(log_callback, investigation_id, "Filling password input...", "INFO")
-                                    await target.evaluate("el => el.style.outline = '4px solid #00FF66'")
-                                    await target.click()
-                                    await target.fill("") # Clear input first to prevent double-typing
-                                    await target.press_sequentially(auth_pass, delay=30)
-                                    await asyncio.sleep(0.5)
-                                    pass_filled = True
-                                    break
+                                    try:
+                                        self._log(log_callback, investigation_id, "Filling password input...", "INFO")
+                                        await target.evaluate("el => el.style.outline = '4px solid #00FF66'")
+                                        await target.click(force=True, timeout=2000)
+                                        await target.fill("") # Clear input first to prevent double-typing
+                                        await asyncio.sleep(0.3) # Human pause before typing
+                                        await target.press_sequentially(auth_pass, delay=150) # Slow, human-like typing
+                                        await asyncio.sleep(0.5)
+                                        await target.press("Enter") # Bulletproof form submission fallback
+                                        await asyncio.sleep(0.5)
+                                        pass_filled = True
+                                        break
+                                    except Exception as e:
+                                        logger.debug(f"Failed to fill password: {e}")
 
                             if user_filled and pass_filled:
                                 # Auto-check any login consent checkboxes (e.g. age agreement on Fun88)
@@ -309,7 +327,8 @@ class PlaywrightInvestigationEngine:
                                         break
                             
                             if not submit_clicked:
-                                raise Exception("No visible login submit button found to click.")
+                                self._log(log_callback, investigation_id, "No visible submit button found. Relying on 'Enter' key press...", "INFO")
+                                await asyncio.sleep(2.0)
 
                             # Detect on-screen authentication error/status messages (e.g. Invalid User ID, wrong password)
                             try:
@@ -340,13 +359,19 @@ class PlaywrightInvestigationEngine:
                     self.auth_resumed.clear()
 
                     while self.pause_for_auth and not self.stop_requested:
-                        if self.auth_resumed.is_set(): self.pause_for_auth = False; break
+                        if self.auth_resumed.is_set(): 
+                            self._log(log_callback, investigation_id, "Verifying manual login state before resuming...", "INFO")
+                            try:
+                                if not await self.check_login_required(self.page, await self.page.content(), self.page.url):
+                                    self._log(log_callback, investigation_id, f"✅ Manual login strictly verified! Resuming crawl...", "INFO")
+                                    self.pause_for_auth = False
+                                    break
+                                else:
+                                    self._log(log_callback, investigation_id, f"❌ Manual login failed! Form still present. Please log in.", "WARNING")
+                                    self.auth_resumed.clear() # Block resumption and pause again
+                            except Exception:
+                                pass
                         await asyncio.sleep(1)
-                        try:
-                            if not await self.check_login_required(self.page, await self.page.content(), self.page.url):
-                                self._log(log_callback, investigation_id, f"✅ Manual login detected! Auto-resuming crawl...", "INFO")
-                                self.pause_for_auth = False; break
-                        except Exception: pass
 
             login_completed = True
             self._log(log_callback, investigation_id, "🔐 Login phase complete. Login checks & login page visits disabled for rest of crawl.", "INFO")
@@ -403,6 +428,31 @@ class PlaywrightInvestigationEngine:
 
                     page_title = await self.page.title() or page_url
                     page_html = await self.page.content()
+
+                    # --- MID-CRAWL SECURITY GUARD ---
+                    if login_completed:
+                        if await self.check_login_required(self.page, page_html, page_url):
+                            self._log(log_callback, investigation_id, f"⚠️ Mid-Crawl Alert: Session lost or login modal detected on {page_url}!", "WARNING")
+                            self.pause_for_auth = True
+                            if auth_callback: auth_callback()
+                            self.auth_resumed.clear()
+                            
+                            while self.pause_for_auth and not self.stop_requested:
+                                if self.auth_resumed.is_set():
+                                    try:
+                                        if not await self.check_login_required(self.page, await self.page.content(), self.page.url):
+                                            self._log(log_callback, investigation_id, "✅ Session restored! Resuming deep crawl...", "INFO")
+                                            self.pause_for_auth = False
+                                            page_html = await self.page.content() # Refresh HTML after login
+                                            break
+                                        else:
+                                            self.auth_resumed.clear()
+                                    except Exception:
+                                        pass
+                                await asyncio.sleep(1)
+                                
+                    if self.stop_requested:
+                        break
 
                     # Deep Deposit & Payment QR Code Inspection Flow (Runs ONCE post-login)
                     if login_completed and not deposit_inspected:

@@ -44,8 +44,8 @@ class TargetValidator:
             else:
                 result["redirect_chain"] = [target]
                 
-            # Reachable if status code is < 400 or auth-protected (401/403)
-            if response.status_code < 400 or response.status_code in [401, 403]:
+            # Reachable if status code is < 400 or auth-protected (401/403) or Cloudflare rate-limited (429)
+            if response.status_code < 400 or response.status_code in [401, 403, 429]:
                 result["valid"] = True
             else:
                 result["error"] = f"HTTP Error Status: {response.status_code}"
