@@ -55,7 +55,15 @@ class TargetValidator:
             result["error"] = "SSL Verification Failed (Non-HTTPS or invalid certificate)"
             result["is_https"] = False
         except requests.exceptions.RequestException as e:
-            result["error"] = f"Connection Failed: {str(e)}"
-            result["is_reachable"] = False
+            error_str = str(e)
+            if "ConnectionResetError" in error_str or "Connection aborted" in error_str or "RemoteDisconnected" in error_str or "Read timed out" in error_str:
+                # WAF / Anti-Bot protection is likely blocking the 'requests' library. 
+                # We should still allow Playwright to attempt to load the site.
+                result["valid"] = True
+                result["error"] = f"WAF Blocked Validator (Connection Reset). Proceeding to browser..."
+                result["is_reachable"] = True
+            else:
+                result["error"] = f"Connection Failed: {error_str}"
+                result["is_reachable"] = False
             
         return result
